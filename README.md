@@ -30,6 +30,7 @@ Generate names, check Roblox username availability, filter for more word-like re
 - **Secure credential saving** — Single-name claims generate a strong password and save the username/password pair in Windows Credential Manager.
 - **Saved Accounts menu** — Browse saved usernames, copy or reveal one password on demand, open Roblox login, delete a saved credential, or export usernames only.
 - **Browser companion included** — The Windows download also contains the Chrome/Edge autofill extension; no separate download is required.
+- **Standalone extension download** — GitHub Actions also publishes the autofill companion by itself for users who already have the EXE.
 - **Birthday + username + password autofill** — The companion fills the Roblox Create Account form using your saved birthday and the credentials prepared by Name Sniffer.
 - **Enter-to-submit** — Once the signup form is filled, pressing Enter activates Roblox's normal Create Account / Sign Up button.
 - **Save results** — Export available usernames to timestamped text files on your Desktop without storing passwords in plaintext.
@@ -76,41 +77,48 @@ Mode: [s]can [g]enerate [a]esthetic-only [m]anual [w]ordlist [c]redentials?
 
 ## 🚀 Download
 
-The easiest way to use Name Sniffer is the latest successful GitHub Actions package.
+Open **Actions → Build Windows EXE** and choose the newest successful v2.5 run. You will see two artifacts:
 
-1. Open **Actions → Build Windows EXE** in this repository.
-2. Open the newest successful v2.5 run.
-3. Download the artifact named **`ScarnsNameSniffer-v2.5-Windows`**.
-4. Extract it. You will get both:
+```text
+ScarnsNameSniffer-v2.5-Windows
+ScarnsNameSniffer-v2.5-Autofill-Extension
+```
+
+### Full package
+
+Download **`ScarnsNameSniffer-v2.5-Windows`** if you want everything. After extracting it you will get:
 
 ```text
 ScarnsNameSniffer.exe
 browser-extension/
 ```
 
-5. Run `ScarnsNameSniffer.exe`.
-6. To enable signup autofill, install the included `browser-extension` folder once using the instructions below.
+### Extension only
+
+Download **`ScarnsNameSniffer-v2.5-Autofill-Extension`** if you already have Name Sniffer and only need the Chrome/Edge companion.
 
 > Windows SmartScreen may warn about independently distributed executables that are not code-signed. Source is included in this repository for inspection.
 
 ---
 
-## 🌐 Install the Included Autofill Extension
+## 🌐 Install the Autofill Extension
 
 ### Chrome
 
-1. Open `chrome://extensions`.
-2. Turn on **Developer mode**.
-3. Click **Load unpacked**.
-4. Select the `browser-extension` folder that came with the v2.5 download.
-5. Pin **Scarn's Name Sniffer Autofill** if you want quick access to birthday settings.
+1. Extract the download.
+2. Open `chrome://extensions`.
+3. Turn on **Developer mode**.
+4. Click **Load unpacked**.
+5. Select the `browser-extension` folder, or the extracted extension-only artifact folder.
+6. Pin **Scarn's Name Sniffer Autofill** if you want quick access to birthday settings.
 
 ### Edge
 
-1. Open `edge://extensions`.
-2. Turn on **Developer mode**.
-3. Click **Load unpacked**.
-4. Select the included `browser-extension` folder.
+1. Extract the download.
+2. Open `edge://extensions`.
+3. Turn on **Developer mode**.
+4. Click **Load unpacked**.
+5. Select the extension folder.
 
 Click the extension icon once, save the account holder's birthday, and leave **Press Enter to submit signup** enabled if you want the keyboard shortcut.
 
@@ -147,49 +155,22 @@ python v25_entry.py
 
 ## 📦 Build the Windows EXE
 
-Install PyInstaller:
-
 ```powershell
 python -m pip install pyinstaller
-```
-
-Build:
-
-```powershell
 python -m PyInstaller --onefile --name "ScarnsNameSniffer" --noconfirm v25_entry.py
 ```
 
-The executable will be created at `dist\ScarnsNameSniffer.exe`. The repository's GitHub Actions workflow automatically packages the EXE and `browser-extension` folder together.
+The repository's GitHub Actions workflow automatically packages the EXE and extension together and also publishes the extension separately.
 
 ---
 
 ## 🔐 Saved Accounts / Credentials
 
-Choose `[c]redentials` from the main menu to browse credentials created by single-name claim mode.
-
-Entries are stored as Windows Generic Credentials using names such as:
-
-```text
-ScarnsNameSniffer:exampleuser
-```
+Choose `[c]redentials` from the main menu to browse credentials created by single-name claim mode. Entries are stored as Windows Generic Credentials using names such as `ScarnsNameSniffer:exampleuser`.
 
 For a selected username, v2.5 can copy the username, copy or reveal the saved password, open Roblox login, delete the credential after confirmation, or export a usernames-only list.
 
 Credentials are saved **before** Roblox signup finishes, so a saved entry means Name Sniffer prepared credentials for that username. It does not guarantee the Roblox account was successfully created.
-
----
-
-## 🌐 Claiming a Username
-
-After a scan, Name Sniffer shows a numbered **Claim a Name** menu. Choosing one username generates a strong password, saves the username/password pair in Windows Credential Manager, prepares a one-time autofill handoff for the companion extension, and opens Roblox Create Account.
-
-Bulk-open remains available by entering `b` in the claim menu. Bulk mode does not generate or save account passwords.
-
----
-
-## ⚡ Aesthetic Scoring
-
-Aesthetic mode favors names that look more pronounceable or word-like. The score considers common letter pairs, vowel balance, useful starts/endings, consonant/vowel patterns, awkward combinations, and excessive digits.
 
 ---
 
@@ -202,21 +183,6 @@ Name Sniffer uses Roblox's username-validation service. Large or repeated scans 
 ## 🔐 Privacy
 
 Name Sniffer does **not** require an existing Roblox password, `.ROBLOSECURITY` cookie, or Roblox authentication token. Generated signup credentials are stored locally under your Windows account when secure saving succeeds. Passwords are not stored in extension history or plaintext scan-result files.
-
----
-
-## 🛠️ Roadmap
-
-Possible future additions:
-
-- Favorites / starred names before claiming one
-- Multi-length scanning in one run
-- Adjustable aesthetic scoring
-- Search/filter inside Saved Accounts
-- Account status markers
-- Extension health check
-- GUI version
-- Persistent scan presets
 
 ---
 
