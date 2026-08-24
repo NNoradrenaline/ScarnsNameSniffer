@@ -1,6 +1,18 @@
 (() => {
   "use strict";
 
+  let enterSubmitEnabled = true;
+
+  chrome.storage.local.get({ enterSubmit: true }, ({ enterSubmit }) => {
+    enterSubmitEnabled = enterSubmit !== false;
+  });
+
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === "local" && changes.enterSubmit) {
+      enterSubmitEnabled = changes.enterSubmit.newValue !== false;
+    }
+  });
+
   function visible(element) {
     if (!element) return false;
     const style = getComputedStyle(element);
@@ -61,6 +73,7 @@
   }
 
   document.addEventListener("keydown", event => {
+    if (!enterSubmitEnabled) return;
     if (event.key !== "Enter" || event.repeat) return;
     if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
     if (event.target instanceof HTMLTextAreaElement || event.target?.isContentEditable) return;
