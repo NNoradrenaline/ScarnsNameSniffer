@@ -2,6 +2,7 @@
   "use strict";
 
   const USERNAME_RE = /^[A-Za-z0-9_]{3,20}$/;
+  const PAYLOAD_PREFIX = "SCARN_AUTOFILL_V2|";
   const LOWER = "abcdefghijkmnopqrstuvwxyz";
   const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
   const DIGITS = "23456789";
@@ -13,6 +14,7 @@
   let generatedPassword = null;
   let mainFieldsFilled = false;
   let birthdayFilled = false;
+  let lastUsername = null;
 
   function randomIndex(max) {
     const buf = new Uint32Array(1);
@@ -169,10 +171,23 @@
     return monthOk && dayOk && yearOk;
   }
 
-  async function readClipboard() {
+  async function readClipboardData() {
     try {
       const text = (await navigator.clipboard.readText()).trim();
-      return USERNAME_RE.test(text) ? text : null;
+      if (text.startsWith(PAYLOAD_PREFIX)) {
+        const parts = text.split("|");
+        const username = parts[1] || "";
+        const password = parts[2] || "";
+        const saved = parts[3] === "1";
+        if (USERNAME_RE.test(username) && password.length >= 12) {
+          try { await navigator.clipboard.writeText(""); } catch (_) {}
+          return { username, password, saved, secureHandoff: true };
+        }
+      }
+      if (USERNAME_RE.test(text)) {
+        return { username: text, password: null, saved: false, secureHandoff: false };
+      }
+      return null;
     } catch (_) {
       return null;
     }
@@ -194,7 +209,22 @@
     }
   }
 
-  function makePanel(username, password, birthday, birthdayStatus) {
+  function rememberAccount(username, birthday, saved) {
+    chrome.storage.local.get({ accountHistory: [] }, ({ accountHistory }) => {
+      const history = Array.isArray(accountHistory) ? accountHistory : [];
+      const entry = {
+        username,
+        birthday: birthday || "",
+        passwordLocation: saved ? "Windows Credential Manager" : "Not saved by Name Sniffer",
+        createdAt: new Date().toISOString()
+      };
+      const withoutDuplicate = history.filter(item => item.username !== username);
+      withoutDuplicate.unshift(entry);
+      chrome.storage.local.set({ accountHistory: withoutDuplicate.slice(0, 100) });
+    });
+  }
+
+  function makePanel(username, password, birthday, birthdayStatus, saved) {
     document.getElementById("scarn-sniffer-autofill")?.remove();
     const box = document.createElement("div");
     box.id = "scarn-sniffer-autofill";
@@ -214,13 +244,14 @@
       <div style="font-weight:800;font-size:15px;margin-bottom:10px">🔎 Scarn's Name Sniffer</div>
       <div style="color:#9fb0c2;margin-bottom:8px">Autofilled <b data-user style="color:#53f59a"></b></div>
       ${birthdayLine}
+      <div style="color:${saved ? "#53f59a" : "#f6c85f"};margin-bottom:10px">Password storage: <b>${saved ? "Windows Credential Manager ✓" : "not securely saved"}</b></div>
       <div style="font-size:12px;color:#7f93a8;margin-bottom:4px">Generated password</div>
       <code data-pw style="display:block;padding:9px 10px;background:#080b10;border-radius:8px;color:#65d9ff;word-break:break-all">••••••••••••••••</code>
       <div style="display:flex;gap:8px;margin-top:10px">
         <button data-show style="border:1px solid #314052;background:#18212d;color:#eef4ff;border-radius:8px;padding:7px 10px;cursor:pointer;font-weight:700">Show</button>
         <button data-copy style="border:1px solid #314052;background:#18212d;color:#eef4ff;border-radius:8px;padding:7px 10px;cursor:pointer;font-weight:700">Copy password</button>
       </div>
-      <div style="margin-top:10px;color:#8fa1b3;font-size:12px">Save this password before creating the account. The companion never presses Create Account for you.</div>
+      <div style="margin-top:10px;color:#8fa1b3;font-size:12px">${saved ? "This password is already saved in Windows Credential Manager." : "Save this password before creating the account."} The companion never presses Create Account for you.</div>
     `;
 
     box.querySelector("[data-user]").textContent = username;
@@ -251,19 +282,21 @@
     const box = document.createElement("div");
     box.id = "scarn-sniffer-autofill";
     box.style.cssText = "position:fixed;right:18px;top:18px;z-index:2147483647;width:300px;padding:15px;border-radius:12px;background:#0f141c;color:#eef4ff;border:1px solid #314052;font:14px system-ui;box-shadow:0 18px 50px rgba(0,0,0,.45)";
-    box.innerHTML = `<b>🔎 Scarn's Name Sniffer</b><div style="margin:9px 0;color:#9fb0c2">I couldn't read the username from the clipboard automatically.</div><button style="border:1px solid #314052;background:#18212d;color:#eef4ff;border-radius:8px;padding:8px 11px;cursor:pointer;font-weight:700">Autofill now</button>`;
+    box.innerHTML = `<b>🔎 Scarn's Name Sniffer</b><div style="margin:9px 0;color:#9fb0c2">I couldn't read the username/password handoff from the clipboard automatically.</div><button style="border:1px solid #314052;background:#18212d;color:#eef4ff;border-radius:8px;padding:8px 11px;cursor:pointer;font-weight:700">Autofill now</button>`;
     box.querySelector("button").addEventListener("click", async () => {
-      const username = await readClipboard();
-      if (username) await startFill(username, true);
-      else box.querySelector("div").textContent = "Clipboard doesn't contain a Roblox-style username. Choose a name in Name Sniffer again.";
+      const account = await readClipboardData();
+      if (account) await startFill(account, true);
+      else box.querySelector("div").textContent = "Clipboard doesn't contain a Name Sniffer handoff. Choose the name in Name Sniffer again.";
     });
     document.documentElement.appendChild(box);
   }
 
-  async function attemptFill(username) {
+  async function attemptFill(account) {
+    const username = account.username;
+    lastUsername = username;
     const fields = findFields();
     if (fields.username && fields.password) {
-      generatedPassword ||= makePassword();
+      generatedPassword ||= account.password || makePassword();
       setNativeValue(fields.username, username);
       setNativeValue(fields.password, generatedPassword);
       mainFieldsFilled = true;
@@ -275,22 +308,24 @@
     return { birthday };
   }
 
-  async function startFill(username, userGesture = false) {
-    if (!USERNAME_RE.test(username)) return false;
+  async function startFill(account, userGesture = false) {
+    if (!account || !USERNAME_RE.test(account.username)) return false;
     let birthday = "";
 
     for (let attempt = 0; attempt < 40; attempt++) {
-      const result = await attemptFill(username);
+      const result = await attemptFill(account);
       birthday = result.birthday;
       if (mainFieldsFilled && (!birthday || birthdayFilled)) {
-        makePanel(username, generatedPassword, birthday, birthdayFilled);
+        rememberAccount(account.username, birthday, account.saved);
+        makePanel(account.username, generatedPassword, birthday, birthdayFilled, account.saved);
         return true;
       }
       await new Promise(resolve => setTimeout(resolve, 250));
     }
 
     if (mainFieldsFilled) {
-      makePanel(username, generatedPassword, birthday, birthdayFilled);
+      rememberAccount(account.username, birthday, account.saved);
+      makePanel(account.username, generatedPassword, birthday, birthdayFilled, account.saved);
       return true;
     }
 
@@ -299,11 +334,11 @@
   }
 
   async function start() {
-    let username = await readClipboard();
+    let account = await readClipboardData();
 
     for (let attempt = 0; attempt < 40; attempt++) {
-      if (!username) username = await readClipboard();
-      if (username && await startFill(username)) return;
+      if (!account) account = await readClipboardData();
+      if (account && await startFill(account)) return;
       await new Promise(resolve => setTimeout(resolve, 250));
     }
 
