@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Scarn's Name Sniffer v2.6 executable entrypoint."""
 
+import random
 import sys
 import webbrowser
 
@@ -48,6 +49,56 @@ def open_registration_page_v26(name=None):
 
 
 base.open_registration_page = open_registration_page_v26
+
+
+# Candidate-generation hotfix.
+# In v2.6 aesthetic + mixed mode, the original best-of-N ranking strongly
+# preferred all-letter candidates because score_name rewards zero digits.
+# That made "mixed" behave almost like letters-only. For short Roblox names,
+# deliberately using one clean digit greatly expands the candidate space while
+# preserving a pronounceable stem.
+_original_generate_ranked = engine.generate_ranked
+
+
+def _aesthetic_letters(length):
+    candidate = base.generate_aesthetic(length)
+    letters = "".join(ch for ch in candidate.lower() if ch.isalpha())
+    while len(letters) < length:
+        letters += random.choice(base.LETTERS)
+    return letters[:length]
+
+
+def generate_ranked_mixed_fix(length, charset=None, aesthetic=True):
+    charset = charset or base.CHARSET
+
+    # Preserve every existing generator path except aesthetic + mixed.
+    if not aesthetic or charset != base.CHARSET:
+        return _original_generate_ranked(length, charset, aesthetic)
+
+    pool = []
+    for _ in range(14):
+        stem = _aesthetic_letters(length)
+        digit = random.choice(base.DIGITS)
+
+        # Keep exactly one digit. Most candidates put it at an edge so the
+        # pronounceable portion remains intact, with some internal variants.
+        style = random.randrange(5)
+        if style in (0, 1):
+            candidate = stem[:-1] + digit
+        elif style == 2:
+            candidate = digit + stem[1:]
+        else:
+            pos = random.randrange(1, max(2, length - 1))
+            chars = list(stem)
+            chars[min(pos, length - 2)] = digit
+            candidate = "".join(chars)
+
+        pool.append(candidate[:length])
+
+    return max(pool, key=engine.score_name)
+
+
+engine.generate_ranked = generate_ranked_mixed_fix
 
 
 # Display hotfix: surface available usernames while scans are still running.
@@ -118,6 +169,42 @@ def print_scan_summary_with_available(results, scanner):
 
 engine.progress_line = progress_line_with_available
 engine.print_scan_summary = print_scan_summary_with_available
+
+
+# Better scan-budget UX. Asking for 500 available names with only 500 total
+# checks requires a 100% hit rate, so v2.6 now recommends a realistic search
+# budget while still respecting an explicitly smaller value.
+def scan_mode_with_budget_hint(aesthetic_default=True):
+    _seen_verified.clear()
+    _seen_unverified.clear()
+
+    lengths = engine.choose_lengths()
+    target = max(1, int(input("How many VERIFIED available names to find? ") or "5"))
+    recommended = max(500, target * 20)
+    raw_max = input(f"Max checks? (recommended {recommended}): ").strip()
+    max_checks = max(target, int(raw_max or str(recommended)))
+
+    if max_checks < target * 5:
+        print(
+            f"  Note: {target} finds in {max_checks} checks is a very aggressive target. "
+            f"For short names, {recommended}+ checks is more realistic."
+        )
+
+    charset = engine.choose_charset()
+    if aesthetic_default and charset == "mixed":
+        print("  Mixed aesthetic mode: clean one-digit candidates enabled.")
+
+    config = {
+        "lengths": lengths,
+        "target": target,
+        "max_checks": max_checks,
+        "charset": charset,
+        "aesthetic": aesthetic_default,
+    }
+    engine.run_scan(config)
+
+
+engine.scan_mode = scan_mode_with_budget_hint
 
 
 if __name__ == "__main__":
