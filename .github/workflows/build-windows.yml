@@ -59,6 +59,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path package | Out-Null
           Copy-Item dist/ScarnsNameSniffer.exe package/ScarnsNameSniffer.exe
           Copy-Item browser-extension package/browser-extension -Recurse
+          Compress-Archive -Path browser-extension\* -DestinationPath package\ScarnsNameSniffer-Autofill-v2.5.zip -Force
+          Compress-Archive -Path browser-extension\* -DestinationPath ScarnsNameSniffer-Autofill-v2.5.zip -Force
 
       - name: Upload full Windows + extension bundle
         uses: actions/upload-artifact@v4
@@ -67,9 +69,9 @@ jobs:
           path: package
           if-no-files-found: error
 
-      - name: Upload autofill extension separately
+      - name: Upload release-ready extension ZIP
         uses: actions/upload-artifact@v4
         with:
           name: ScarnsNameSniffer-v2.5-Autofill-Extension
-          path: browser-extension
+          path: ScarnsNameSniffer-Autofill-v2.5.zip
           if-no-files-found: error
