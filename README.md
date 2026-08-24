@@ -29,8 +29,7 @@ Generate names, check Roblox username availability, filter for more word-like re
 - **Claim menu** — Pick an available name from a numbered list after a scan.
 - **Secure credential saving** — Single-name claims generate a strong password and save the username/password pair in Windows Credential Manager.
 - **Saved Accounts menu** — Browse saved usernames, copy or reveal one password on demand, open Roblox login, delete a saved credential, or export usernames only.
-- **Browser companion included** — The Windows download also contains the Chrome/Edge autofill extension; no separate download is required.
-- **Standalone extension download** — GitHub Actions also publishes the autofill companion by itself for users who already have the EXE.
+- **Browser companion included** — The Windows release includes the Chrome/Edge autofill extension.
 - **Birthday + username + password autofill** — The companion fills the Roblox Create Account form using your saved birthday and the credentials prepared by Name Sniffer.
 - **Enter-to-submit** — Once the signup form is filled, pressing Enter activates Roblox's normal Create Account / Sign Up button.
 - **Save results** — Export available usernames to timestamped text files on your Desktop without storing passwords in plaintext.
@@ -73,31 +72,32 @@ Mode: [s]can [g]enerate [a]esthetic-only [m]anual [w]ordlist [c]redentials?
 - Added a usernames-only export option for saved credentials.
 - The included browser companion lets you press **Enter** to activate Roblox's normal Create Account / Sign Up button after the form is filled.
 - The Enter shortcut does **not** bypass CAPTCHA, verification, rate limits, disabled buttons, or any other Roblox protections.
-- The downloadable GitHub Actions bundle contains both the Windows EXE and the `browser-extension` folder.
+- The Windows release includes both the EXE and the browser extension.
+
+---
 
 ## 🚀 Download
 
-Open **Actions → Build Windows EXE** and choose the newest successful v2.5 run. You will see two artifacts:
+**Most users should download Name Sniffer from the GitHub Releases page. You do not need Python, PyInstaller, or any build tools.**
 
-```text
-ScarnsNameSniffer-v2.5-Windows
-ScarnsNameSniffer-v2.5-Autofill-Extension
-```
+1. Open the repository's **Releases** section.
+2. Open the latest release, currently **v2.5**.
+3. Download the Windows package or the files attached to the release.
+4. Extract the download.
+5. Run `ScarnsNameSniffer.exe`.
 
-### Full package
+The v2.5 release includes the Windows app and the browser autofill companion.
 
-Download **`ScarnsNameSniffer-v2.5-Windows`** if you want everything. After extracting it you will get:
+Typical release files include:
 
 ```text
 ScarnsNameSniffer.exe
-browser-extension/
+ScarnsNameSniffer-Autofill-v2.5.zip
 ```
 
-### Extension only
+If you only want the browser companion, download `ScarnsNameSniffer-Autofill-v2.5.zip` from the release.
 
-Download **`ScarnsNameSniffer-v2.5-Autofill-Extension`** if you already have Name Sniffer and only need the Chrome/Edge companion.
-
-> Windows SmartScreen may warn about independently distributed executables that are not code-signed. Source is included in this repository for inspection.
+> Windows SmartScreen may warn about independently distributed executables that are not code-signed. The source code is public in this repository for inspection.
 
 ---
 
@@ -105,26 +105,29 @@ Download **`ScarnsNameSniffer-v2.5-Autofill-Extension`** if you already have Nam
 
 ### Chrome
 
-1. Extract the download.
-2. Open `chrome://extensions`.
-3. Turn on **Developer mode**.
-4. Click **Load unpacked**.
-5. Select the `browser-extension` folder, or the extracted extension-only artifact folder.
-6. Pin **Scarn's Name Sniffer Autofill** if you want quick access to birthday settings.
+1. Download `ScarnsNameSniffer-Autofill-v2.5.zip` from the latest GitHub Release.
+2. Extract the ZIP to a folder.
+3. Open `chrome://extensions`.
+4. Turn on **Developer mode**.
+5. Click **Load unpacked**.
+6. Select the extracted extension folder containing `manifest.json`.
+7. Pin **Scarn's Name Sniffer Autofill** if you want quick access to birthday settings.
 
 ### Edge
 
-1. Extract the download.
+1. Download and extract `ScarnsNameSniffer-Autofill-v2.5.zip` from the latest GitHub Release.
 2. Open `edge://extensions`.
 3. Turn on **Developer mode**.
 4. Click **Load unpacked**.
-5. Select the extension folder.
+5. Select the extracted extension folder containing `manifest.json`.
 
 Click the extension icon once, save the account holder's birthday, and leave **Press Enter to submit signup** enabled if you want the keyboard shortcut.
 
 ---
 
-## 🐍 Run From Source
+## 🧑‍💻 Developers / Run From Source
+
+Regular users should use the prebuilt files from **Releases**. This section is only for developers who want to inspect or modify the source.
 
 ### Requirements
 
@@ -145,22 +148,13 @@ Install the dependency:
 python -m pip install requests
 ```
 
-Run v2.5:
+Run v2.5 from source:
 
 ```powershell
 python v25_entry.py
 ```
 
----
-
-## 📦 Build the Windows EXE
-
-```powershell
-python -m pip install pyinstaller
-python -m PyInstaller --onefile --name "ScarnsNameSniffer" --noconfirm v25_entry.py
-```
-
-The repository's GitHub Actions workflow automatically packages the EXE and extension together and also publishes the extension separately.
+You do **not** need to build the EXE yourself for normal use. Download the ready-to-run executable from **GitHub Releases** instead.
 
 ---
 
