@@ -1,0 +1,50 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "roblox_name_gen.py"
+      - "requirements.txt"
+      - "icon.ico"
+      - ".github/workflows/build-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Build Scarn's Name Sniffer
+        shell: pwsh
+        run: |
+          if (Test-Path "icon.ico") {
+            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" --icon "icon.ico" roblox_name_gen.py
+          } else {
+            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" roblox_name_gen.py
+          }
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScarnsNameSniffer-v2.1-Windows
+          path: dist/ScarnsNameSniffer.exe
+          if-no-files-found: error
