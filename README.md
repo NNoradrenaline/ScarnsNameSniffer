@@ -4,7 +4,7 @@
 
 ### A fast Roblox username generator and availability checker for Windows.
 
-![Version](https://img.shields.io/badge/version-2.0-blue)
+![Version](https://img.shields.io/badge/version-2.1-blue)
 ![Python](https://img.shields.io/badge/Python-3.x-yellow?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white)
 ![Status](https://img.shields.io/badge/status-active-success)
@@ -26,9 +26,10 @@ Generate names, check Roblox username availability, filter for more word-like re
 - **4, 5, and 6 character generation** — Quickly target short usernames.
 - **Multiple character sets** — Letters only, letters + numbers, or numbers only.
 - **Availability highlighting** — Available names are easy to spot in the terminal.
-- **Automatic clipboard copy** — Available usernames found in manual lookup are copied for quick pasting.
+- **Claim menu** — Pick an available name from a numbered list after a scan.
+- **Automatic clipboard copy** — The selected username is copied for quick pasting into Roblox.
 - **Save results** — Export available usernames to timestamped text files on your Desktop.
-- **Browser helper** — Can open Roblox after a scan, while keeping the username ready to copy/paste manually.
+- **Registration helper** — Opens Roblox registration after copying the exact username you selected.
 - **Safe tab limit** — Choose how many signup tabs to open, with a default of 10 instead of launching every result at once.
 - **Concurrent checks** — Uses multiple workers to check batches faster.
 - **Rate-limit/error reporting** — Reports Roblox rate limiting, CSRF failures, invalid names, and other request errors.
@@ -38,7 +39,7 @@ Generate names, check Roblox username availability, filter for more word-like re
 ## 🖥️ Example
 
 ```text
-                 Scarn's Name Sniffer v2.0
+                 Scarn's Name Sniffer v2.1
        (Roblox username generator + availability checker)
 
 Fetching CSRF token... OK
@@ -58,13 +59,24 @@ Mode: [s]can [g]enerate [a]esthetic-only [m]anual [w]ordlist?
 
 ---
 
+## 🆕 What's New in v2.1
+
+- Replaced broken clickable signup links with a numbered claim menu.
+- Select one available username and copy it automatically.
+- Opens Roblox's registration route for the selected name.
+- Keeps bulk-open as an optional fallback instead of the default workflow.
+- Keeps the configurable 10-tab safety limit.
+
 ## 🚀 Download
 
 The easiest way to use Name Sniffer is the Windows executable.
 
-Download `ScarnsNameSniffer.exe` from this repository after the Windows build is uploaded.
+1. Open the **Releases** section of this repository.
+2. Download the latest `ScarnsNameSniffer.exe`.
+3. Run it.
+4. Choose a mode and start sniffing names.
 
-> Windows SmartScreen may warn about independently distributed executables that are not code-signed. The source code is included in this repository so you can inspect or build it yourself.
+> Windows SmartScreen may warn about independently distributed executables that are not code-signed. If you publish releases, include the source code and checksums so users can verify what they downloaded.
 
 ---
 
@@ -152,11 +164,13 @@ Saved files include the app version, scan mode, date, results, and the `made by 
 
 ---
 
-## 🌐 Browser Behavior
+## 🌐 Claiming a Username
 
-Roblox currently may redirect signup links back to the Roblox home page, including links opened from the terminal. This is a Roblox-side routing behavior, so **v2.0 does not guarantee that clicking an available username will land on a working signup form**.
+v2.1 removes the old clickable terminal username links that could bounce back to the Roblox homepage. After a scan, Name Sniffer now shows a numbered **Claim a Name** menu. Pick a result and the tool copies that exact username to your clipboard, then opens Roblox's registration route so you can paste it with `Ctrl+V`.
 
-Manual lookup still copies an available username to the clipboard, and scan results can be saved to a text file for easy copy/paste. When the browser helper is used, the program asks how many tabs to launch. The default is **10**, and `0` skips opening tabs entirely.
+Bulk-open is still available by entering `b` in the claim menu. You choose the maximum number of tabs, the default remains **10**, and `0` skips opening tabs entirely.
+
+Roblox controls its own registration routing and can change it at any time. If the registration page changes or redirects, the selected username is still copied to your clipboard so the availability result is not lost.
 
 ---
 
@@ -232,6 +246,6 @@ Use the project responsibly and follow Roblox's Terms of Use and applicable API/
 
 ### 🔎 Find the name before somebody else does.
 
-**Scarn's Name Sniffer v2.0**
+**Scarn's Name Sniffer v2.1**
 
 </div>
