@@ -29,8 +29,9 @@ Generate names, check Roblox username availability, filter for more word-like re
 - **Claim menu** — Pick an available name from a numbered list after a scan.
 - **Secure credential saving** — Single-name claims generate a strong password and save the username/password pair in Windows Credential Manager.
 - **Saved Accounts menu** — Browse saved usernames, copy or reveal one password on demand, open Roblox login, delete a saved credential, or export usernames only.
-- **Browser companion** — Optional Chrome/Edge extension fills birthday, username, and password on Roblox Create Account.
-- **Enter-to-submit** — Once the signup form is filled, pressing Enter activates Roblox's normal Create Account / Sign Up button. The shortcut can be disabled from the extension popup.
+- **Browser companion included** — The Windows download also contains the Chrome/Edge autofill extension; no separate download is required.
+- **Birthday + username + password autofill** — The companion fills the Roblox Create Account form using your saved birthday and the credentials prepared by Name Sniffer.
+- **Enter-to-submit** — Once the signup form is filled, pressing Enter activates Roblox's normal Create Account / Sign Up button.
 - **Save results** — Export available usernames to timestamped text files on your Desktop without storing passwords in plaintext.
 - **Safe tab limit** — Bulk-open remains optional with a configurable cap.
 - **Concurrent checks** — Uses multiple workers to check batches faster.
@@ -69,21 +70,49 @@ Mode: [s]can [g]enerate [a]esthetic-only [m]anual [w]ordlist [c]redentials?
 - For one selected credential you can copy the username, copy the password, reveal the password, open Roblox login, or delete the credential.
 - Deleting a credential requires typing the username as confirmation.
 - Added a usernames-only export option for saved credentials.
-- The browser companion now lets you press **Enter** to activate Roblox's normal Create Account / Sign Up button after the form is filled.
-- Enter-to-submit defaults to on and can be switched off from the extension popup.
+- The included browser companion lets you press **Enter** to activate Roblox's normal Create Account / Sign Up button after the form is filled.
 - The Enter shortcut does **not** bypass CAPTCHA, verification, rate limits, disabled buttons, or any other Roblox protections.
-- The v2.5 Windows build uses `v25_entry.py`, which layers v2.5 behavior on top of the stable v2.4 scanner core and v2.5 Saved Accounts launcher.
+- The downloadable GitHub Actions bundle contains both the Windows EXE and the `browser-extension` folder.
 
 ## 🚀 Download
 
-The easiest way to use Name Sniffer is the Windows executable.
+The easiest way to use Name Sniffer is the latest successful GitHub Actions package.
 
-1. Open the **Releases** section of this repository, or download the latest successful GitHub Actions artifact.
-2. Download `ScarnsNameSniffer.exe`.
-3. Keep the included `browser-extension` folder if you want signup autofill.
-4. Run the EXE and choose a mode.
+1. Open **Actions → Build Windows EXE** in this repository.
+2. Open the newest successful v2.5 run.
+3. Download the artifact named **`ScarnsNameSniffer-v2.5-Windows`**.
+4. Extract it. You will get both:
+
+```text
+ScarnsNameSniffer.exe
+browser-extension/
+```
+
+5. Run `ScarnsNameSniffer.exe`.
+6. To enable signup autofill, install the included `browser-extension` folder once using the instructions below.
 
 > Windows SmartScreen may warn about independently distributed executables that are not code-signed. Source is included in this repository for inspection.
+
+---
+
+## 🌐 Install the Included Autofill Extension
+
+### Chrome
+
+1. Open `chrome://extensions`.
+2. Turn on **Developer mode**.
+3. Click **Load unpacked**.
+4. Select the `browser-extension` folder that came with the v2.5 download.
+5. Pin **Scarn's Name Sniffer Autofill** if you want quick access to birthday settings.
+
+### Edge
+
+1. Open `edge://extensions`.
+2. Turn on **Developer mode**.
+3. Click **Load unpacked**.
+4. Select the included `browser-extension` folder.
+
+Click the extension icon once, save the account holder's birthday, and leave **Press Enter to submit signup** enabled if you want the keyboard shortcut.
 
 ---
 
@@ -114,8 +143,6 @@ Run v2.5:
 python v25_entry.py
 ```
 
-The entrypoint imports the existing `roblox_name_gen.py` scanner core plus the v2.5 Saved Accounts launcher, then applies the final v2.5 browser handoff behavior.
-
 ---
 
 ## 📦 Build the Windows EXE
@@ -132,25 +159,7 @@ Build:
 python -m PyInstaller --onefile --name "ScarnsNameSniffer" --noconfirm v25_entry.py
 ```
 
-The executable will be created here:
-
-```text
-dist\ScarnsNameSniffer.exe
-```
-
-The repository's GitHub Actions workflow builds the EXE automatically and packages the `browser-extension` folder beside it.
-
----
-
-## 💾 Saved Results
-
-Available usernames can be saved to your Desktop in timestamped files such as:
-
-```text
-sniff_2026-08-23_03-55-00.txt
-```
-
-Saved scan files contain usernames and scan information, but **not generated account passwords**.
+The executable will be created at `dist\ScarnsNameSniffer.exe`. The repository's GitHub Actions workflow automatically packages the EXE and `browser-extension` folder together.
 
 ---
 
@@ -164,14 +173,7 @@ Entries are stored as Windows Generic Credentials using names such as:
 ScarnsNameSniffer:exampleuser
 ```
 
-For a selected username, v2.5 can:
-
-- copy the username
-- copy the saved password
-- reveal the password on demand
-- open Roblox login with the username copied
-- delete the saved credential after confirmation
-- export the list of usernames without passwords
+For a selected username, v2.5 can copy the username, copy or reveal the saved password, open Roblox login, delete the credential after confirmation, or export a usernames-only list.
 
 Credentials are saved **before** Roblox signup finishes, so a saved entry means Name Sniffer prepared credentials for that username. It does not guarantee the Roblox account was successfully created.
 
@@ -185,37 +187,21 @@ Bulk-open remains available by entering `b` in the claim menu. Bulk mode does no
 
 ---
 
-## 🌐 Autofill Companion
-
-The optional Chrome/Edge companion fills your configured birthday, selected username, and the exact password generated by the Windows app. It clears the one-time credential handoff from the clipboard after reading it and stores only non-secret history.
-
-Once the normal Roblox signup form is filled, press **Enter** to activate the visible Create Account / Sign Up button. Enter-to-submit defaults to on and can be changed from the extension popup. If Roblox requires CAPTCHA or another verification step, that protection still works normally and must be completed normally.
-
-The extension source is in `browser-extension/`.
-
----
-
 ## ⚡ Aesthetic Scoring
 
 Aesthetic mode favors names that look more pronounceable or word-like. The score considers common letter pairs, vowel balance, useful starts/endings, consonant/vowel patterns, awkward combinations, and excessive digits.
-
-It is intentionally a heuristic, not an English dictionary check, so sometimes it produces strange little linguistic goblins. That's part of the hunt.
 
 ---
 
 ## ⚠️ Rate Limits
 
-Name Sniffer uses Roblox's username-validation service. Large or repeated scans may be rate-limited.
-
-If you receive a `ratelimited` result, stop the scan and try again later. Do not use the tool to bypass Roblox limits or platform protections.
+Name Sniffer uses Roblox's username-validation service. Large or repeated scans may be rate-limited. If you receive a `ratelimited` result, stop the scan and try again later. Do not use the tool to bypass Roblox limits or platform protections.
 
 ---
 
 ## 🔐 Privacy
 
-Name Sniffer does **not** require an existing Roblox password, `.ROBLOSECURITY` cookie, or Roblox authentication token.
-
-Generated signup credentials are stored locally under your Windows account when secure saving succeeds. Passwords are not stored in extension history or plaintext scan-result files.
+Name Sniffer does **not** require an existing Roblox password, `.ROBLOSECURITY` cookie, or Roblox authentication token. Generated signup credentials are stored locally under your Windows account when secure saving succeeds. Passwords are not stored in extension history or plaintext scan-result files.
 
 ---
 
@@ -223,15 +209,14 @@ Generated signup credentials are stored locally under your Windows account when 
 
 Possible future additions:
 
-- **Favorites / starred names** before claiming one
-- **Multi-length scanning** in one run, such as 4 + 5 + 6 characters together
-- **Adjustable aesthetic score** and better syllable-based generation
-- **Search/filter inside Saved Accounts** for larger credential lists
-- **Account status marker** so prepared credentials can later be marked as successfully created
-- **Extension health check** that reports whether autofill is installed and responding
-- **GUI version** with tabs for Scan, Results, and Saved Accounts
-- **Persistent scan presets** for favorite length/charset/aesthetic settings
-- Cleaner result ranking and duplicate-history cleanup
+- Favorites / starred names before claiming one
+- Multi-length scanning in one run
+- Adjustable aesthetic scoring
+- Search/filter inside Saved Accounts
+- Account status markers
+- Extension health check
+- GUI version
+- Persistent scan presets
 
 ---
 
@@ -239,9 +224,7 @@ Possible future additions:
 
 Scarn's Name Sniffer is an unofficial community tool and is **not affiliated with, endorsed by, or sponsored by Roblox Corporation**.
 
-Username availability can change at any time. A name reported as available is not guaranteed to remain available or to be claimable.
-
-Use the project responsibly and follow Roblox's Terms of Use and applicable API/service limits.
+Username availability can change at any time. Use the project responsibly and follow Roblox's Terms of Use and applicable API/service limits.
 
 ---
 
