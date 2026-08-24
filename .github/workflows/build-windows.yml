@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Apply v2.1.1 clipboard fix
+      - name: Apply v2.1.2 signup-route fix
         shell: pwsh
         run: |
           @'
@@ -35,98 +35,28 @@ jobs:
 
           path = Path("roblox_name_gen.py")
           source = path.read_text(encoding="utf-8")
-          source = source.replace('APP_VER = "2.1"', 'APP_VER = "2.1.1"')
 
-          new_clipboard = '''def copy_to_clipboard(text):
-              """Copy a Roblox username to the Windows clipboard reliably."""
-              text = str(text)
-              creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-
-              try:
-                  proc = subprocess.Popen(
-                      ["clip.exe"],
-                      stdin=subprocess.PIPE,
-                      stdout=subprocess.DEVNULL,
-                      stderr=subprocess.PIPE,
-                      text=True,
-                      creationflags=creationflags,
-                  )
-                  proc.communicate(text, timeout=5)
-                  if proc.returncode == 0:
-                      return True
-              except Exception:
-                  pass
-
-              try:
-                  proc = subprocess.Popen(
-                      [
-                          "powershell.exe", "-NoProfile", "-NonInteractive",
-                          "-Command", "[Console]::In.ReadToEnd() | Set-Clipboard"
-                      ],
-                      stdin=subprocess.PIPE,
-                      stdout=subprocess.DEVNULL,
-                      stderr=subprocess.PIPE,
-                      text=True,
-                      creationflags=creationflags,
-                  )
-                  proc.communicate(text, timeout=5)
-                  if proc.returncode == 0:
-                      return True
-              except Exception:
-                  pass
-
-              try:
-                  with open(os.path.join(os.environ.get('TEMP', ''), '_sniff_last.txt'), 'w', encoding='utf-8') as f:
-                      f.write(text)
-              except Exception:
-                  pass
-              return False
-
-          '''
-
-          source, count = re.subn(
-              r'def copy_to_clipboard\(text\):\n.*?(?=def print_available)',
-              new_clipboard,
+          source = re.sub(
+              r'APP_VER\s*=\s*"[^"]+"',
+              'APP_VER = "2.1.2"',
               source,
               count=1,
-              flags=re.S,
-          )
-          if count != 1:
-              raise SystemExit("Could not locate clipboard helper")
-
-          source = source.replace(
-              '''    copy_to_clipboard(names[0])
-              print(f"    Opening {count} registration tab(s). '{names[0]}' is copied to clipboard.")
-          ''',
-              '''    copied = copy_to_clipboard(names[0])
-              if copied:
-                  print(f"    Opening {count} registration tab(s). '{names[0]}' is copied to clipboard.")
-              else:
-                  print(f"    Opening {count} registration tab(s). Clipboard copy failed; copy '{names[0]}' manually.")
-          ''',
           )
 
-          source = source.replace(
-              '''        if status == "available":
-                  copy_to_clipboard(name.lower())
-                  print(f"    -> \\033[92m{name.lower()}\\033[0m: AVAILABLE! [copied to clipboard]")
-                  found.append(name.lower())
-          ''',
-              '''        if status == "available":
-                  copied = copy_to_clipboard(name.lower())
-                  copy_note = "copied to clipboard" if copied else "clipboard copy failed"
-                  print(f"    -> \\033[92m{name.lower()}\\033[0m: AVAILABLE! [{copy_note}]")
-                  found.append(name.lower())
-          ''',
+          source = re.sub(
+              r'ROBLOX_REGISTRATION_URL\s*=\s*"[^"]+"',
+              'ROBLOX_REGISTRATION_URL = "https://www.roblox.com/CreateAccount"',
+              source,
+              count=1,
           )
 
           path.write_text(source, encoding="utf-8")
-          '@ | Set-Content -Encoding UTF8 patch_clipboard.py
+          '@ | Set-Content -Encoding UTF8 patch_v212.py
 
-          python patch_clipboard.py
+          python patch_v212.py
           python -m py_compile roblox_name_gen.py
 
-      - name: Commit clipboard fix to source
+      - name: Commit v2.1.2 source fix
         shell: pwsh
         run: |
           git config user.name "github-actions[bot]"
@@ -134,7 +64,7 @@ jobs:
           git add roblox_name_gen.py
           git diff --cached --quiet
           if ($LASTEXITCODE -ne 0) {
-            git commit -m "Fix Windows clipboard copy in v2.1.1"
+            git commit -m "Fix Roblox signup route in v2.1.2 [skip ci]"
             git push
           }
 
@@ -157,6 +87,6 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: ScarnsNameSniffer-v2.1.1-Windows
+          name: ScarnsNameSniffer-v2.1.2-Windows
           path: dist/ScarnsNameSniffer.exe
           if-no-files-found: error
