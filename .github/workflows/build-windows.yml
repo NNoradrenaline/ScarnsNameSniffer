@@ -60,9 +60,16 @@ jobs:
           Copy-Item dist/ScarnsNameSniffer.exe package/ScarnsNameSniffer.exe
           Copy-Item browser-extension package/browser-extension -Recurse
 
-      - name: Upload Windows build
+      - name: Upload full Windows + extension bundle
         uses: actions/upload-artifact@v4
         with:
           name: ScarnsNameSniffer-v2.5-Windows
           path: package
+          if-no-files-found: error
+
+      - name: Upload autofill extension separately
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScarnsNameSniffer-v2.5-Autofill-Extension
+          path: browser-extension
           if-no-files-found: error
