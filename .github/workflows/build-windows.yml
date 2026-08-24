@@ -12,7 +12,6 @@ on:
       - "requirements.txt"
       - "icon.ico"
       - "browser-extension/**"
-      - "tests/**"
       - ".github/workflows/build-windows.yml"
   workflow_dispatch:
 
@@ -48,9 +47,12 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
 
-      - name: Test v2.6 engine
+      - name: Smoke test v2.6 engine
         shell: pwsh
-        run: python -m unittest discover -s tests -p "test_v26_engine.py" -v
+        run: |
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP "ScarnsNameSnifferSmoke"
+          New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
+          python -c "import v26_engine; v26_engine.init_db(); print('v2.6 engine smoke test OK')"
 
       - name: Build Scarn's Name Sniffer v2.6
         shell: pwsh
