@@ -1,15 +1,8 @@
 name: Build Windows EXE
 
-# v2.4 clean build: never commits or pushes from inside GitHub Actions.
+# Staging mode for v2.5. Push builds are temporarily disabled while the
+# launcher and browser companion files are updated together.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "roblox_name_gen.py"
-      - "requirements.txt"
-      - "icon.ico"
-      - "browser-extension/**"
-      - ".github/workflows/build-windows.yml"
   workflow_dispatch:
 
 permissions:
@@ -30,7 +23,9 @@ jobs:
 
       - name: Verify source
         shell: pwsh
-        run: python -m py_compile roblox_name_gen.py
+        run: |
+          python -m py_compile roblox_name_gen.py
+          if (Test-Path "v25_launcher.py") { python -m py_compile v25_launcher.py }
 
       - name: Install dependencies
         shell: pwsh
@@ -42,13 +37,14 @@ jobs:
       - name: Build Scarn's Name Sniffer
         shell: pwsh
         run: |
+          $entry = if (Test-Path "v25_launcher.py") { "v25_launcher.py" } else { "roblox_name_gen.py" }
           if (Test-Path "icon.ico") {
-            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" --icon "icon.ico" roblox_name_gen.py
+            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" --icon "icon.ico" $entry
           } else {
-            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" roblox_name_gen.py
+            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" $entry
           }
 
-      - name: Stage v2.4 package
+      - name: Stage package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path package | Out-Null
@@ -58,6 +54,6 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: ScarnsNameSniffer-v2.4-Windows
+          name: ScarnsNameSniffer-staging-Windows
           path: package
           if-no-files-found: error
