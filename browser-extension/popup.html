@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Name Sniffer Autofill</title>
+  <style>
+    body { width: 310px; margin: 0; padding: 16px; background: #0f141c; color: #eef4ff; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    h1 { font-size: 16px; margin: 0 0 8px; }
+    p { color: #9fb0c2; margin: 0 0 14px; }
+    label { display: block; font-weight: 700; margin-bottom: 6px; }
+    input { width: 100%; box-sizing: border-box; border: 1px solid #314052; border-radius: 8px; background: #080b10; color: #eef4ff; padding: 9px 10px; }
+    .row { display: flex; gap: 8px; margin-top: 10px; }
+    button { flex: 1; border: 1px solid #314052; border-radius: 8px; background: #18212d; color: #eef4ff; padding: 8px 10px; cursor: pointer; font-weight: 700; }
+    button.primary { background: #53f59a; color: #04120a; border-color: transparent; }
+    #status { min-height: 20px; margin-top: 10px; color: #65d9ff; font-size: 12px; }
+    .note { margin-top: 12px; color: #7f93a8; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <h1>🔎 Name Sniffer Autofill</h1>
+  <p>Set the birthday to use on Roblox signup.</p>
+  <label for="birthday">Birthday</label>
+  <input id="birthday" type="date" autocomplete="bday">
+  <div class="row">
+    <button id="save" class="primary">Save birthday</button>
+    <button id="clear">Clear</button>
+  </div>
+  <div id="status"></div>
+  <div class="note">Use the account holder's actual birthday. The date is stored locally by the extension and is not sent to Name Sniffer.</div>
+  <script src="popup.js"></script>
+</body>
+</html>
