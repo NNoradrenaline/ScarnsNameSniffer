@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Scarn's Name Sniffer Autofill",
-  "version": "2.4.0",
-  "description": "Autofills Roblox signup and works with Name Sniffer v2.4 secure Windows Credential Manager saving. Never submits the form.",
+  "version": "2.5.0",
+  "description": "Autofills Roblox signup, works with Name Sniffer v2.5 secure credential saving, and lets Enter activate Roblox's normal Create Account button.",
   "permissions": ["clipboardRead", "clipboardWrite", "storage"],
   "action": {
     "default_title": "Scarn's Name Sniffer Autofill",
@@ -11,7 +11,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.roblox.com/CreateAccount*"],
-      "js": ["content.js"],
+      "js": ["content.js", "enter-submit.js"],
       "run_at": "document_idle"
     }
   ]
