@@ -2,6 +2,9 @@
   "use strict";
 
   let enterSubmitEnabled = true;
+  let armed = false;
+  let countdownStartedAt = null;
+  const ARM_DELAY_MS = 5000;
 
   chrome.storage.local.get({ enterSubmit: true }, ({ enterSubmit }) => {
     enterSubmitEnabled = enterSubmit !== false;
@@ -10,6 +13,7 @@
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName === "local" && changes.enterSubmit) {
       enterSubmitEnabled = changes.enterSubmit.newValue !== false;
+      if (!enterSubmitEnabled) resetArmState();
     }
   });
 
@@ -72,8 +76,74 @@
     return submits.length === 1 ? submits[0] : null;
   }
 
+  function statusNode() {
+    let node = document.getElementById("scarn-submit-arm-status");
+    if (node) return node;
+
+    node = document.createElement("div");
+    node.id = "scarn-submit-arm-status";
+    node.style.cssText = "margin-top:10px;padding:8px 10px;border-radius:8px;background:#080b10;color:#9fb0c2;font:12px/1.35 system-ui,-apple-system,Segoe UI,sans-serif";
+
+    const panel = document.getElementById("scarn-sniffer-autofill");
+    if (panel) {
+      panel.appendChild(node);
+    } else {
+      node.style.position = "fixed";
+      node.style.right = "18px";
+      node.style.top = "18px";
+      node.style.zIndex = "2147483647";
+      document.documentElement.appendChild(node);
+    }
+    return node;
+  }
+
+  function setStatus(text, ready = false) {
+    const node = statusNode();
+    node.textContent = text;
+    node.style.color = ready ? "#53f59a" : "#9fb0c2";
+  }
+
+  function resetArmState() {
+    armed = false;
+    countdownStartedAt = null;
+    const node = document.getElementById("scarn-submit-arm-status");
+    if (node) node.remove();
+  }
+
+  function tickArmState() {
+    if (!enterSubmitEnabled) {
+      resetArmState();
+      return;
+    }
+
+    const button = findCreateAccountButton();
+    const ready = formLooksFilled() && button && !button.disabled && button.getAttribute("aria-disabled") !== "true";
+
+    if (!ready) {
+      armed = false;
+      countdownStartedAt = null;
+      setStatus("Waiting for the signup form to be ready…");
+      return;
+    }
+
+    if (armed) return;
+    if (countdownStartedAt === null) countdownStartedAt = Date.now();
+
+    const elapsed = Date.now() - countdownStartedAt;
+    const remaining = Math.max(0, Math.ceil((ARM_DELAY_MS - elapsed) / 1000));
+
+    if (elapsed < ARM_DELAY_MS) {
+      setStatus(`Signup ready. Press Enter in ${remaining}s…`);
+      return;
+    }
+
+    armed = true;
+    try { button.focus({ preventScroll: true }); } catch (_) { button.focus(); }
+    setStatus("Ready ✓ Press Enter to create the account.", true);
+  }
+
   document.addEventListener("keydown", event => {
-    if (!enterSubmitEnabled) return;
+    if (!enterSubmitEnabled || !armed) return;
     if (event.key !== "Enter" || event.repeat) return;
     if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
     if (event.target instanceof HTMLTextAreaElement || event.target?.isContentEditable) return;
@@ -86,4 +156,6 @@
     event.stopPropagation();
     button.click();
   }, true);
+
+  setInterval(tickArmState, 250);
 })();
