@@ -52,7 +52,7 @@
 
     <main>
       <div class="hero">
-        <div class="eyebrow">WINDOWS · v2.1 · MADE BY SCARN</div>
+        <div class="eyebrow">WINDOWS · v2.4 · MADE BY SCARN</div>
         <h1>Sniff out a Roblox name worth keeping.</h1>
         <p class="lead">Generate short usernames, check availability, hunt for more word-like names, scan your own wordlists, and save the good finds.</p>
         <div class="actions">
@@ -61,7 +61,7 @@
         </div>
         <div class="terminal">
           <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
-          <pre>                 Scarn's Name Sniffer v2.1
+          <pre>                 Scarn's Name Sniffer v2.4
        (Roblox username generator + availability checker)
 
 Fetching CSRF token... <b>OK</b>
@@ -76,32 +76,30 @@ Mode: [s]can [g]enerate [a]esthetic-only [m]anual [w]ordlist?</pre>
         <div class="grid">
           <div class="card"><strong>🔍 Availability scan</strong><p>Generate usernames and check them against Roblox's validation service.</p></div>
           <div class="card"><strong>✨ Aesthetic mode</strong><p>Favor more pronounceable results using consonant/vowel patterns and a word-like scoring heuristic.</p></div>
-          <div class="card"><strong>⌨️ Manual lookup</strong><p>Check a name you already have in mind and copy available results to your clipboard.</p></div>
-          <div class="card"><strong>📃 Custom wordlists</strong><p>Load a text file of roots and check generated 4, 5, or 6 character variations.</p></div>
-          <div class="card"><strong>💾 Result saving</strong><p>Save available usernames to timestamped text files on your Desktop.</p></div>
-          <div class="card"><strong>🎯 Claim menu</strong><p>Pick one available name from a numbered list, copy it automatically, and open Roblox registration.</p></div>
-          <div class="card"><strong>🧯 Tab limiter</strong><p>Bulk-open is still optional. Choose the tab count, with a default cap of 10 and 0 to skip.</p></div>
+          <div class="card"><strong>⌨️ Manual lookup</strong><p>Check a name you already have in mind and claim an available result.</p></div>
+          <div class="card"><strong>🔐 Secure credential saving</strong><p>Single-name claims generate a strong password and store it with the username in Windows Credential Manager.</p></div>
+          <div class="card"><strong>🌐 Autofill companion</strong><p>Optional Chrome/Edge extension can fill birthday, username, and the saved password on Roblox Create Account.</p></div>
+          <div class="card"><strong>🧯 Tab limiter</strong><p>Choose how many browser tabs to open. The default cap is 10, with 0 available to skip.</p></div>
         </div>
       </section>
 
       <section id="download">
         <h2>Windows download</h2>
-        <p class="sub">The release build is packaged as <code>ScarnsNameSniffer.exe</code>. No Roblox password or account cookie is required.</p>
+        <p class="sub">The release build is packaged as <code>ScarnsNameSniffer.exe</code>. No existing Roblox password or account cookie is required.</p>
         <div class="steps">
           <div class="step"><strong>Download the latest release.</strong><br><span class="sub">Grab <code>ScarnsNameSniffer.exe</code> from the GitHub Releases page.</span></div>
           <div class="step"><strong>Run the executable.</strong><br><span class="sub">Windows SmartScreen can warn about unsigned independent apps. Source is included in the repository for inspection.</span></div>
-          <div class="step"><strong>Pick a mode and start scanning.</strong><br><span class="sub">When names are found, choose one from the claim menu. It is copied to your clipboard automatically.</span></div>
-          <div class="step"><strong>Paste it into Roblox.</strong><br><span class="sub">Name Sniffer opens the registration route for you, then you can paste the selected username with Ctrl+V.</span></div>
+          <div class="step"><strong>Pick a mode and start scanning.</strong><br><span class="sub">Single-name claims can be securely saved in Windows Credential Manager and handed to the optional browser companion for autofill.</span></div>
         </div>
       </section>
 
       <section>
-        <h2>Known Roblox link behavior</h2>
-        <div class="warning"><strong>v2.1 browser fix:</strong> Name Sniffer no longer makes available usernames into broken signup hyperlinks. Choose a name from the claim menu instead. The tool copies it and opens Roblox registration. Roblox can still change its routing, so clipboard copy remains the reliable fallback.</div>
+        <h2>Secure claim workflow</h2>
+        <div class="warning"><strong>v2.4:</strong> Single-name claim mode generates a strong password, saves the username/password pair in Windows Credential Manager, then opens Roblox Create Account. The optional Chrome/Edge companion can fill the saved birthday, username, and password automatically. The final Create Account click is always left to you.</div>
       </section>
     </main>
 
-    <footer><span>Unofficial community tool. Not affiliated with Roblox Corporation.</span><span>Scarn's Name Sniffer v2.1</span></footer>
+    <footer><span>Unofficial community tool. Not affiliated with Roblox Corporation.</span><span>Scarn's Name Sniffer v2.4</span></footer>
   </div>
 </body>
 </html>
