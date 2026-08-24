@@ -4,7 +4,7 @@
 
 ### A fast Roblox username generator and availability checker for Windows.
 
-![Version](https://img.shields.io/badge/version-2.1-blue)
+![Version](https://img.shields.io/badge/version-2.4-blue)
 ![Python](https://img.shields.io/badge/Python-3.x-yellow?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white)
 ![Status](https://img.shields.io/badge/status-active-success)
@@ -27,9 +27,10 @@ Generate names, check Roblox username availability, filter for more word-like re
 - **Multiple character sets** — Letters only, letters + numbers, or numbers only.
 - **Availability highlighting** — Available names are easy to spot in the terminal.
 - **Claim menu** — Pick an available name from a numbered list after a scan.
-- **Automatic clipboard copy** — The selected username is copied for quick pasting into Roblox.
-- **Save results** — Export available usernames to timestamped text files on your Desktop.
-- **Registration helper** — Opens Roblox registration after copying the exact username you selected.
+- **Secure credential saving** — Single-name claims generate a strong password and save the username/password pair in Windows Credential Manager.
+- **Browser companion** — Optional Chrome/Edge extension can fill birthday, username, and password on Roblox Create Account.
+- **Save results** — Export available usernames to timestamped text files on your Desktop without storing passwords in plaintext.
+- **Registration helper** — Opens Roblox Create Account for the exact username you selected.
 - **Safe tab limit** — Choose how many signup tabs to open, with a default of 10 instead of launching every result at once.
 - **Concurrent checks** — Uses multiple workers to check batches faster.
 - **Rate-limit/error reporting** — Reports Roblox rate limiting, CSRF failures, invalid names, and other request errors.
@@ -39,7 +40,7 @@ Generate names, check Roblox username availability, filter for more word-like re
 ## 🖥️ Example
 
 ```text
-                 Scarn's Name Sniffer v2.1
+                 Scarn's Name Sniffer v2.4
        (Roblox username generator + availability checker)
 
 Fetching CSRF token... OK
@@ -59,13 +60,15 @@ Mode: [s]can [g]enerate [a]esthetic-only [m]anual [w]ordlist?
 
 ---
 
-## 🆕 What's New in v2.1
+## 🆕 What's New in v2.4
 
-- Replaced broken clickable signup links with a numbered claim menu.
-- Select one available username and copy it automatically.
-- Opens Roblox's registration route for the selected name.
-- Keeps bulk-open as an optional fallback instead of the default workflow.
-- Keeps the configurable 10-tab safety limit.
+- Generates a strong password when you claim a single available username.
+- Saves the username/password pair securely in **Windows Credential Manager**.
+- Hands the same credentials to the Chrome/Edge companion for autofill.
+- Clears the one-time clipboard handoff after the companion reads it.
+- Keeps passwords out of plaintext result files and extension history.
+- Birthday autofill remains configurable in the companion extension.
+- The final **Create Account** click is always left to you.
 
 ## 🚀 Download
 
@@ -160,17 +163,17 @@ Available usernames can be saved to your Desktop in timestamped files such as:
 sniff_2026-08-23_03-55-00.txt
 ```
 
-Saved files include the app version, scan mode, date, results, and the `made by scarn` signature.
+Saved result files contain usernames and scan information, but **not generated account passwords**.
 
 ---
 
 ## 🌐 Claiming a Username
 
-v2.1 removes the old clickable terminal username links that could bounce back to the Roblox homepage. After a scan, Name Sniffer now shows a numbered **Claim a Name** menu. Pick a result and the tool copies that exact username to your clipboard, then opens Roblox's registration route so you can paste it with `Ctrl+V`.
+After a scan, Name Sniffer shows a numbered **Claim a Name** menu. In v2.4, choosing one username generates a strong password, saves the username/password pair in Windows Credential Manager, prepares a one-time autofill handoff for the companion extension, and opens Roblox Create Account.
 
-Bulk-open is still available by entering `b` in the claim menu. You choose the maximum number of tabs, the default remains **10**, and `0` skips opening tabs entirely.
+Bulk-open is still available by entering `b` in the claim menu. You choose the maximum number of tabs, the default remains **10**, and `0` skips opening tabs entirely. Bulk mode does not generate or save account passwords.
 
-Roblox controls its own registration routing and can change it at any time. If the registration page changes or redirects, the selected username is still copied to your clipboard so the availability result is not lost.
+Roblox controls its own registration routing and can change it at any time. The companion never submits the form automatically; review the birthday, username, and generated password before creating the account.
 
 ---
 
@@ -197,11 +200,37 @@ If you receive a `ratelimited` result, stop the scan and try again later. Do not
 
 ---
 
+## 🔐 Secure account saving
+
+In v2.4, single-name claim mode generates the signup password in the Windows app and saves the username/password pair as a **Generic Credential in Windows Credential Manager** before Roblox opens.
+
+Windows Credential Manager entries use names such as:
+
+```text
+ScarnsNameSniffer:exampleuser
+```
+
+The browser companion receives the credentials through a one-time clipboard handoff, fills Roblox, and clears that handoff after reading it. The extension keeps only non-secret history such as username, birthday, credential location, and timestamp.
+
+Passwords are not stored in extension history or plaintext result files.
+
+Bulk-open mode does not securely save passwords. Use the numbered single-name claim flow when you want automatic credential saving.
+
+---
+
+## 🌐 Autofill Companion
+
+The optional Chrome/Edge companion can fill the saved birthday, selected username, and the exact password generated by the v2.4 Windows app. It clears the one-time clipboard handoff after reading it and stores only non-secret history. It never presses **Create Account** for you.
+
+The extension source is in `browser-extension/`.
+
+---
+
 ## 🔐 Privacy
 
-Name Sniffer does **not** require your Roblox password or `.ROBLOSECURITY` cookie.
+Name Sniffer does **not** require your Roblox password, `.ROBLOSECURITY` cookie, or existing Roblox authentication token.
 
-Do not enter account cookies, passwords, authentication tokens, or other private credentials into third-party builds of this project.
+Generated signup credentials are stored locally under your Windows account when secure saving succeeds. Do not enter account cookies, existing passwords, authentication tokens, or other private credentials into third-party builds of this project.
 
 ---
 
@@ -246,6 +275,6 @@ Use the project responsibly and follow Roblox's Terms of Use and applicable API/
 
 ### 🔎 Find the name before somebody else does.
 
-**Scarn's Name Sniffer v2.1**
+**Scarn's Name Sniffer v2.4**
 
 </div>
