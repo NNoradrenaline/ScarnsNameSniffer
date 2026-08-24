@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import requests, random, string, time, sys, re, os, webbrowser, subprocess
+import requests, random, string, time, sys, re, os, webbrowser, subprocess, secrets, ctypes
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from collections import Counter
@@ -35,68 +35,123 @@ PATTERNS_5 = ['CVCVC','CVCV','VCVCV','VCCVC','CVCCV','CVCVV','VVCVC','CCVCC','CV
 PATTERNS_6 = ['CVCVCV','VCVCVC','CVCCVC','VCCVCC','CVCVCC','VCVCCV','CCVCVC','CVCCVV']
 
 APP_NAME = "Scarn's Name Sniffer"
-APP_VER = "2.1.2"
+APP_VER = "2.4"
 ROBLOX_REGISTRATION_URL = "https://www.roblox.com/CreateAccount"
 SAVE_DIR = os.path.join(os.path.expanduser("~"), "Desktop")
 os.makedirs(SAVE_DIR, exist_ok=True)
 
+# ── Secure account credential storage ─────────────────────────
+PASSWORD_LOWER = "abcdefghijkmnopqrstuvwxyz"
+PASSWORD_UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+PASSWORD_DIGITS = "23456789"
+PASSWORD_SYMBOLS = "!@#$%"
+
+
+def generate_account_password(length=16):
+    """Generate a strong password without ambiguous characters."""
+    rng = secrets.SystemRandom()
+    chars = [
+        secrets.choice(PASSWORD_LOWER),
+        secrets.choice(PASSWORD_UPPER),
+        secrets.choice(PASSWORD_DIGITS),
+        secrets.choice(PASSWORD_SYMBOLS),
+    ]
+    alphabet = PASSWORD_LOWER + PASSWORD_UPPER + PASSWORD_DIGITS + PASSWORD_SYMBOLS
+    while len(chars) < max(12, length):
+        chars.append(secrets.choice(alphabet))
+    rng.shuffle(chars)
+    return "".join(chars)
+
+
+def save_windows_credential(username, password):
+    """Save one Roblox credential in Windows Credential Manager.
+
+    The password is stored as a Generic Credential under the current Windows
+    account. Nothing is written to a plaintext password file.
+    """
+    if os.name != "nt":
+        return False
+
+    try:
+        from ctypes import wintypes
+
+        class FILETIME(ctypes.Structure):
+            _fields_ = [
+                ("dwLowDateTime", wintypes.DWORD),
+                ("dwHighDateTime", wintypes.DWORD),
+            ]
+
+        class CREDENTIALW(ctypes.Structure):
+            _fields_ = [
+                ("Flags", wintypes.DWORD),
+                ("Type", wintypes.DWORD),
+                ("TargetName", wintypes.LPWSTR),
+                ("Comment", wintypes.LPWSTR),
+                ("LastWritten", FILETIME),
+                ("CredentialBlobSize", wintypes.DWORD),
+                ("CredentialBlob", ctypes.POINTER(ctypes.c_ubyte)),
+                ("Persist", wintypes.DWORD),
+                ("AttributeCount", wintypes.DWORD),
+                ("Attributes", ctypes.c_void_p),
+                ("TargetAlias", wintypes.LPWSTR),
+                ("UserName", wintypes.LPWSTR),
+            ]
+
+        advapi32 = ctypes.WinDLL("Advapi32.dll", use_last_error=True)
+        cred_write = advapi32.CredWriteW
+        cred_write.argtypes = [ctypes.POINTER(CREDENTIALW), wintypes.DWORD]
+        cred_write.restype = wintypes.BOOL
+
+        blob = password.encode("utf-16-le")
+        blob_buffer = ctypes.create_string_buffer(blob)
+
+        credential = CREDENTIALW()
+        credential.Flags = 0
+        credential.Type = 1
+        credential.TargetName = f"ScarnsNameSniffer:{username}"
+        credential.Comment = f"Saved by {APP_NAME} v{APP_VER}"
+        credential.CredentialBlobSize = len(blob)
+        credential.CredentialBlob = ctypes.cast(blob_buffer, ctypes.POINTER(ctypes.c_ubyte))
+        credential.Persist = 2
+        credential.AttributeCount = 0
+        credential.Attributes = None
+        credential.TargetAlias = None
+        credential.UserName = username
+
+        return bool(cred_write(ctypes.byref(credential), 0))
+    except Exception:
+        return False
+
+
+def make_autofill_payload(username, password, saved):
+    return f"SCARN_AUTOFILL_V2|{username}|{password}|{1 if saved else 0}"
+
 # ── Clipboard helper ──────────────────────────────────────────
 def copy_to_clipboard(text):
-    """Copy a Roblox username to the Windows clipboard reliably."""
+    """Copy text to the Windows clipboard reliably."""
     text = str(text)
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-
     try:
-        proc = subprocess.Popen(
-            ["clip.exe"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            creationflags=creationflags,
-        )
+        proc = subprocess.Popen(["clip.exe"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, creationflags=creationflags)
         proc.communicate(text, timeout=5)
-        if proc.returncode == 0:
-            return True
+        if proc.returncode == 0: return True
     except Exception:
         pass
-
     try:
-        proc = subprocess.Popen(
-            [
-                "powershell.exe", "-NoProfile", "-NonInteractive",
-                "-Command", "[Console]::In.ReadToEnd() | Set-Clipboard"
-            ],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            creationflags=creationflags,
-        )
+        proc = subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "[Console]::In.ReadToEnd() | Set-Clipboard"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, creationflags=creationflags)
         proc.communicate(text, timeout=5)
-        if proc.returncode == 0:
-            return True
-    except Exception:
-        pass
-
-    try:
-        with open(os.path.join(os.environ.get('TEMP', ''), '_sniff_last.txt'), 'w', encoding='utf-8') as f:
-            f.write(text)
+        if proc.returncode == 0: return True
     except Exception:
         pass
     return False
 
 def print_available(name, extra=""):
-    # v2.1: names are no longer terminal hyperlinks because Roblox does not
-    # reliably preserve signup state through those links. Use the claim menu instead.
     print(f"    -> \033[92m{name}\033[0m  {extra}")
 
 # ── Scoring ──────────────────────────────────────────────────
 def is_wordlike(name):
-    name = name.lower()
-    n = len(name)
-    if n < 3: return 0
-    if not any(c in VOWELS for c in name): return 0
+    name = name.lower(); n = len(name)
+    if n < 3 or not any(c in VOWELS for c in name): return 0
     cur_cons = 0
     for c in name:
         if c in VOWELS: cur_cons = 0
@@ -120,409 +175,239 @@ def is_wordlike(name):
 
 def is_aesthetic(name): return is_wordlike(name) >= 5
 
-# ── Generators ────────────────────────────────────────────────
 def generate_aesthetic(length=5):
     if length < 3: return ''.join(random.choices(LETTERS, k=length))
     pattern_map = {4: PATTERNS_4, 5: PATTERNS_5, 6: PATTERNS_6}
     usable = pattern_map.get(length, []) or [p for p in (PATTERNS_4+PATTERNS_5+PATTERNS_6) if abs(len(p)-length) <= 1]
     if not usable: usable = PATTERNS_5
-    name_chars = []
+    name_chars=[]
     for ch in random.choice(usable):
         name_chars.append(random.choice(CONS) if ch == 'C' else random.choice(list(VOWELS)) if ch == 'V' else ch)
-    result = ''.join(name_chars)[:length]
-    while len(result) < length: result += random.choice(LETTERS)
-    leet = {'a':'4','e':'3','i':'1','o':'0','s':'5','t':'7'}
-    if random.random() < 0.25:
-        idx = random.randrange(len(result))
-        if result[idx] in leet and random.random() < 0.5:
-            lst = list(result); lst[idx] = leet[result[idx]]; result = ''.join(lst)
+    result=''.join(name_chars)[:length]
+    while len(result)<length: result += random.choice(LETTERS)
+    leet={'a':'4','e':'3','i':'1','o':'0','s':'5','t':'7'}
+    if random.random()<0.25:
+        idx=random.randrange(len(result))
+        if result[idx] in leet and random.random()<0.5:
+            lst=list(result); lst[idx]=leet[result[idx]]; result=''.join(lst)
     return result
 
-def generate_random(length=5, charset=None):
-    return ''.join(random.choices(charset or CHARSET, k=length))
+def generate_random(length=5, charset=None): return ''.join(random.choices(charset or CHARSET, k=length))
 
 def generate_from_word(word, length=5):
-    word = word.strip().lower()
+    word=word.strip().lower()
     if not word: return None
-    if len(word) == length: return word
-    if len(word) < length:
-        suffix = ''.join(random.choices(CHARSET, k=length-len(word)))
-        return word + suffix
+    if len(word)==length: return word
+    if len(word)<length: return word + ''.join(random.choices(CHARSET, k=length-len(word)))
     return word[:length]
 
-# ── File saving ───────────────────────────────────────────────
 def save_results(names, mode_desc="batch", extra=""):
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    filename = f"sniff_{timestamp}.txt"
-    filepath = os.path.join(SAVE_DIR, filename)
-    with open(filepath, 'w') as f:
-        f.write(f"{APP_NAME} v{APP_VER}\n")
-        f.write(f"Mode: {mode_desc}\n")
-        f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"{'='*40}\n")
-        for name in names:
-            f.write(f"{name}\n")
-        if extra:
-            f.write(f"\n{extra}\n")
-        f.write(f"\n--- made by scarn ---\n")
-    print(f"\n  [SAVED] Results written to: {filepath}")
-    return filepath
+    timestamp=datetime.now().strftime("%Y-%m-%d_%H-%M-%S"); filename=f"sniff_{timestamp}.txt"; filepath=os.path.join(SAVE_DIR,filename)
+    with open(filepath,'w') as f:
+        f.write(f"{APP_NAME} v{APP_VER}\nMode: {mode_desc}\nDate: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n{'='*40}\n")
+        for name in names: f.write(f"{name}\n")
+        if extra: f.write(f"\n{extra}\n")
+        f.write("\n--- made by scarn ---\n")
+    print(f"\n  [SAVED] Results written to: {filepath}"); return filepath
 
 def open_registration_page(name=None):
-    """Copy one username and open Roblox's registration route."""
-    if name:
-        copied = copy_to_clipboard(name)
-        if copied:
-            print(f"    Copied '{name}' to clipboard. Paste it into Roblox with Ctrl+V.")
-        else:
-            print(f"    Username: {name}  (clipboard copy failed; copy it manually)")
+    if not name:
+        try: webbrowser.open_new_tab(ROBLOX_REGISTRATION_URL); print("    Opening Roblox Create Account...")
+        except Exception as e: print(f"    Could not open browser: {e}")
+        return
+    password=generate_account_password(); saved=save_windows_credential(name,password); copied=copy_to_clipboard(make_autofill_payload(name,password,saved))
+    print(f"    Saved '{name}' securely in Windows Credential Manager." if saved else "    Warning: Windows Credential Manager save failed.")
+    print("    Prepared one-time autofill handoff for the browser companion." if copied else "    Clipboard handoff failed; browser autofill may need manual input.")
     try:
-        webbrowser.open_new_tab(ROBLOX_REGISTRATION_URL)
-        print("    Opening Roblox registration...")
-    except Exception as e:
-        print(f"    Could not open browser: {e}")
+        webbrowser.open_new_tab(ROBLOX_REGISTRATION_URL); print("    Opening Roblox Create Account..."); print("    Companion v2.4 will fill username/password and clear the clipboard handoff.")
+    except Exception as e: print(f"    Could not open browser: {e}")
 
 def open_signup_pages(names, max_tabs=10):
-    """Optional legacy bulk-open helper, now using the registration route."""
-    count = min(len(names), max_tabs)
-    if count == 0:
-        return
-    copied = copy_to_clipboard(names[0])
-    if copied:
-        print(f"    Opening {count} registration tab(s). '{names[0]}' is copied to clipboard.")
-    else:
-        print(f"    Opening {count} registration tab(s). Clipboard copy failed; copy '{names[0]}' manually.")
-    for i in range(count):
+    selected=list(names[:max_tabs])
+    if not selected: return
+    print("    Bulk mode opens signup tabs only. Use single-name claim mode for secure password saving.")
+    for i,_name in enumerate(selected):
         try:
-            if i == 0:
-                webbrowser.open_new(ROBLOX_REGISTRATION_URL)
-            else:
-                webbrowser.open_new_tab(ROBLOX_REGISTRATION_URL)
-        except:
-            pass
+            if i==0: webbrowser.open_new(ROBLOX_REGISTRATION_URL)
+            else: webbrowser.open_new_tab(ROBLOX_REGISTRATION_URL)
+        except Exception: pass
 
-# ── Session & CSRF ────────────────────────────────────────────
-TOKEN_LOCK = Lock()
-CSRF_TOKEN = None
-SESH = requests.Session()
-SESH.headers.update({"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-
+TOKEN_LOCK=Lock(); CSRF_TOKEN=None; SESH=requests.Session(); SESH.headers.update({"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
 def get_csrf_token():
     global CSRF_TOKEN
     try:
-        resp = SESH.post("https://auth.roblox.com/v2/logout", timeout=10)
-        tok = resp.headers.get("x-csrf-token")
-        if tok: CSRF_TOKEN = tok; return tok
-        resp2 = SESH.get("https://www.roblox.com/", timeout=10)
-        m = re.search(r'data-token="([^"]+)"', resp2.text)
-        if m: CSRF_TOKEN = m.group(1); return m.group(1)
+        resp=SESH.post("https://auth.roblox.com/v2/logout",timeout=10); tok=resp.headers.get("x-csrf-token")
+        if tok: CSRF_TOKEN=tok; return tok
+        resp2=SESH.get("https://www.roblox.com/",timeout=10); m=re.search(r'data-token="([^"]+)"',resp2.text)
+        if m: CSRF_TOKEN=m.group(1); return m.group(1)
     except: pass
     return None
-
 def ensure_token():
     global CSRF_TOKEN
     with TOKEN_LOCK: return CSRF_TOKEN if CSRF_TOKEN else get_csrf_token()
-
 def refresh_token():
     with TOKEN_LOCK: return get_csrf_token()
-
-# ── Checking ──────────────────────────────────────────────────
 def check_username(name):
-    url = "https://auth.roblox.com/v1/usernames/validate"
-    params = {"request.username":name,"request.context":"Signup","request.birthday":"2000-01-01"}
-    token = ensure_token()
-    headers = {"x-csrf-token":token} if token else {}
+    url="https://auth.roblox.com/v1/usernames/validate"; params={"request.username":name,"request.context":"Signup","request.birthday":"2000-01-01"}; token=ensure_token(); headers={"x-csrf-token":token} if token else {}
     try:
-        resp = SESH.get(url, params=params, headers=headers, timeout=10)
-        if resp.status_code == 403:
-            t2 = refresh_token()
-            if t2: headers["x-csrf-token"] = t2; resp = SESH.get(url, params=params, headers=headers, timeout=10)
-        if resp.status_code == 429: return (name,"ratelimited")
-        if resp.status_code == 403: return (name,"csrf_blocked")
-        if resp.status_code != 200: return (name,f"http_{resp.status_code}")
-        data = resp.json(); msg = data.get("message",""); code = data.get("code")
-        if "Username is valid" in msg or "Valid username" in msg: return (name,"available")
-        if "already in use" in msg or "AlreadyInUse" in msg: return (name,"taken")
-        if "not appropriate" in msg or "inappropriate" in msg: return (name,"inappropriate")
-        if "start or end with" in msg or "cannot start" in msg: return (name,"invalid_format")
-        if code == 0: return (name,"available")
-        if code in (1,4): return (name,"taken")
-        if code == 2: return (name,"invalid_length")
-        if code == 3: return (name,"inappropriate")
-        return (name,f"unknown({msg[:40]})")
-    except requests.exceptions.RequestException as e: return (name,f"error({e})")
-
+        resp=SESH.get(url,params=params,headers=headers,timeout=10)
+        if resp.status_code==403:
+            t2=refresh_token()
+            if t2: headers["x-csrf-token"]=t2; resp=SESH.get(url,params=params,headers=headers,timeout=10)
+        if resp.status_code==429:return(name,"ratelimited")
+        if resp.status_code==403:return(name,"csrf_blocked")
+        if resp.status_code!=200:return(name,f"http_{resp.status_code}")
+        data=resp.json(); msg=data.get("message",""); code=data.get("code")
+        if "Username is valid" in msg or "Valid username" in msg:return(name,"available")
+        if "already in use" in msg or "AlreadyInUse" in msg:return(name,"taken")
+        if "not appropriate" in msg or "inappropriate" in msg:return(name,"inappropriate")
+        if "start or end with" in msg or "cannot start" in msg:return(name,"invalid_format")
+        if code==0:return(name,"available")
+        if code in(1,4):return(name,"taken")
+        if code==2:return(name,"invalid_length")
+        if code==3:return(name,"inappropriate")
+        return(name,f"unknown({msg[:40]})")
+    except requests.exceptions.RequestException as e:return(name,f"error({e})")
 def check_username_v2(name):
-    url = "https://auth.roblox.com/v2/usernames/validate"
-    params = {"request.username":name,"request.birthday":"04/15/2002","request.context":"Signup"}
-    token = ensure_token(); headers = {"x-csrf-token":token} if token else {}
+    url="https://auth.roblox.com/v2/usernames/validate"; params={"request.username":name,"request.birthday":"04/15/2002","request.context":"Signup"}; token=ensure_token(); headers={"x-csrf-token":token} if token else {}
     try:
-        resp = SESH.get(url, params=params, headers=headers, timeout=10)
-        if resp.status_code == 403:
-            t2 = refresh_token()
-            if t2: headers["x-csrf-token"] = t2; resp = SESH.get(url, params=params, headers=headers, timeout=10)
-        if resp.status_code != 200: return (name,None)
-        c = resp.json().get("code","")
-        if "ValidUsername" in c: return (name,"available")
-        if "AlreadyInUseError" in c: return (name,"taken")
-        return (name,None)
-    except: return (name,None)
-
+        resp=SESH.get(url,params=params,headers=headers,timeout=10)
+        if resp.status_code==403:
+            t2=refresh_token()
+            if t2: headers["x-csrf-token"]=t2; resp=SESH.get(url,params=params,headers=headers,timeout=10)
+        if resp.status_code!=200:return(name,None)
+        c=resp.json().get("code","")
+        if "ValidUsername" in c:return(name,"available")
+        if "AlreadyInUseError" in c:return(name,"taken")
+        return(name,None)
+    except:return(name,None)
 def smart_check(name):
-    r = check_username(name)
+    r=check_username(name)
     if r[1] and (r[1].startswith("unknown") or r[1].startswith("error(")):
-        r2 = check_username_v2(name)
-        if r2[1] is not None: return r2
+        r2=check_username_v2(name)
+        if r2[1] is not None:return r2
     return r
-
-# ── Display ───────────────────────────────────────────────────
-p_lock = Lock()
+p_lock=Lock()
 def p_prog(name,status,found,total):
     with p_lock:
-        mark = "AVAILABLE <<<<" if status=="available" else "taken" if status=="taken" else (status or "?")[:25]
-        sys.stdout.write(f"\r  [{total:>4}] {name:<8} -> {mark:<30}"); sys.stdout.flush()
-
+        mark="AVAILABLE <<<<" if status=="available" else "taken" if status=="taken" else (status or "?")[:25]; sys.stdout.write(f"\r  [{total:>4}] {name:<8} -> {mark:<30}"); sys.stdout.flush()
 def pick_length():
-    l = input("Name length? [4/5/6] (default 5): ").strip()
-    if l in ('4','6'): return int(l)
-    return 5
-
+    l=input("Name length? [4/5/6] (default 5): ").strip(); return int(l) if l in('4','6') else 5
 def get_tab_count():
-    """Ask user how many browser tabs they want to open (default 10)."""
-    ans = input("  Max browser tabs to open? (default 10, 0 to skip): ").strip()
-    try:
-        n = int(ans)
-        return max(0, n)
-    except:
-        return 10
-
+    ans=input("  Max browser tabs to open? (default 10, 0 to skip): ").strip()
+    try:return max(0,int(ans))
+    except:return 10
 def claim_available_name(names):
-    """Let the user choose one available name, copy it, and open registration."""
-    unique_names = list(dict.fromkeys(names))
-    if not unique_names:
-        return
-
-    print("\n  CLAIM A NAME")
-    print("  " + "-" * 36)
-    for i, name in enumerate(unique_names, 1):
-        print(f"  [{i:>2}] {name}")
-
+    unique_names=list(dict.fromkeys(names))
+    if not unique_names:return
+    print("\n  CLAIM A NAME\n  "+"-"*36)
+    for i,name in enumerate(unique_names,1):print(f"  [{i:>2}] {name}")
     while True:
-        choice = input("\n  Choose a number to claim, [b] bulk open, or Enter to skip: ").strip().lower()
-        if not choice:
-            return
-        if choice == 'b':
-            tabs = get_tab_count()
-            open_signup_pages(unique_names, tabs)
-            return
+        choice=input("\n  Choose a number to claim, [b] bulk open, or Enter to skip: ").strip().lower()
+        if not choice:return
+        if choice=='b': open_signup_pages(unique_names,get_tab_count()); return
         if choice.isdigit():
-            idx = int(choice) - 1
-            if 0 <= idx < len(unique_names):
-                chosen = unique_names[idx]
-                open_registration_page(chosen)
-                return
+            idx=int(choice)-1
+            if 0<=idx<len(unique_names):open_registration_page(unique_names[idx]); return
         print(f"  Enter a number from 1 to {len(unique_names)}, 'b', or press Enter to skip.")
 
-# ── Manual Lookup Mode ────────────────────────────────────────
 def manual_lookup_mode():
-    print("\n--- Manual Lookup Mode ---")
-    print("Type usernames to check one at a time. Type 'done' to finish.\n")
-    found = []
-    checked = []
+    print("\n--- Manual Lookup Mode ---\nType usernames to check one at a time. Type 'done' to finish.\n"); found=[]; checked=[]
     while True:
-        name = input("  Check name: ").strip()
-        if not name or name.lower() == 'done':
-            break
-        if not re.match(r'^[a-zA-Z0-9_]+$', name):
-            print("    Invalid (letters, numbers, underscores only)")
-            continue
-        _, status = smart_check(name.lower())
-        checked.append((name, status))
-        if status == "available":
-            copy_to_clipboard(name.lower())
-            print(f"    -> \033[92m{name.lower()}\033[0m: AVAILABLE! [copied to clipboard]")
-            found.append(name.lower())
-        elif status == "taken":
-            print(f"    -> {name}: Taken")
-        else:
-            print(f"    -> {name}: {status}")
-
-    print(f"\n{'='*55}")
-    print(f"  MANUAL LOOKUP RESULTS")
-    print(f"{'='*55}")
-    for n, s in checked:
-        if s == "available":
-            print(f"    \033[92m{n:<15}\033[0m -> AVAILABLE <<<<")
-        else:
-            print(f"    {n:<15} -> {s}")
+        name=input("  Check name: ").strip()
+        if not name or name.lower()=='done':break
+        if not re.match(r'^[a-zA-Z0-9_]+$',name):print("    Invalid (letters, numbers, underscores only)");continue
+        _,status=smart_check(name.lower());checked.append((name,status))
+        if status=="available":print(f"    -> \033[92m{name.lower()}\033[0m: AVAILABLE!");found.append(name.lower())
+        elif status=="taken":print(f"    -> {name}: Taken")
+        else:print(f"    -> {name}: {status}")
+    print(f"\n{'='*55}\n  MANUAL LOOKUP RESULTS\n{'='*55}")
+    for n,s in checked: print(f"    \033[92m{n:<15}\033[0m -> AVAILABLE <<<<" if s=="available" else f"    {n:<15} -> {s}")
     if found:
-        claim_available_name(found)
-        ans2 = input(f"  Save to desktop? [Y/n]: ").strip().lower()
-        if ans2 != 'n': save_results(found, "manual-lookup")
+        claim_available_name(found); ans2=input("  Save to desktop? [Y/n]: ").strip().lower()
+        if ans2!='n':save_results(found,"manual-lookup")
     print("\n--- made by scarn ---\n")
 
-# ── Wordlist Mode ─────────────────────────────────────────────
 def wordlist_mode(length):
-    path = input("Path to wordlist file: ").strip().replace('"', '')
-    if not os.path.exists(path):
-        print(f"  File not found: {path}")
-        return
-    with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-        words = [w.strip() for w in f.readlines() if w.strip()]
-    print(f"  Loaded {len(words)} words from file")
-    variations = list(set(filter(None, [generate_from_word(w, length) for w in words])))
-    print(f"  Generated {len(variations)} unique {length}-char variations")
-    print(f"\nChecking {len(variations)} names...\n")
-    res = []
+    path=input("Path to wordlist file: ").strip().replace('"','')
+    if not os.path.exists(path):print(f"  File not found: {path}");return
+    with open(path,'r',encoding='utf-8',errors='ignore') as f:words=[w.strip() for w in f.readlines() if w.strip()]
+    variations=list(set(filter(None,[generate_from_word(w,length) for w in words])));print(f"  Loaded {len(words)} words from file\n  Generated {len(variations)} unique {length}-char variations\n\nChecking {len(variations)} names...\n")
+    res=[]
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         for i,f in enumerate(as_completed({ex.submit(smart_check,n):n for n in variations})):
-            res.append(f.result()); n,s = res[-1]
-            p_prog(n,s,len([r for r in res if r[1]=="available"]),i+1)
-            if (i+1)%MAX_WORKERS==0: time.sleep(REQUEST_DELAY)
-    av = [n for n,s in res if s=="available"]
-    aest = [n for n in av if is_aesthetic(n)]
-    rand = [n for n in av if not is_aesthetic(n)]
-    print(f"\n\n{'='*55}")
-    print(f"  WORDLIST RESULTS ({length} chars) - Available: {len(av)}/{len(variations)}")
-    print(f"{'='*55}")
+            res.append(f.result());n,s=res[-1];p_prog(n,s,len([r for r in res if r[1]=="available"]),i+1)
+            if(i+1)%MAX_WORKERS==0:time.sleep(REQUEST_DELAY)
+    av=[n for n,s in res if s=="available"];aest=[n for n in av if is_aesthetic(n)];rand=[n for n in av if not is_aesthetic(n)]
+    print(f"\n\n{'='*55}\n  WORDLIST RESULTS ({length} chars) - Available: {len(av)}/{len(variations)}\n{'='*55}")
     if aest:
         print(f"\n  AESTHETIC ({len(aest)}):")
-        for n in aest: print_available(n, f"({is_wordlike(n)}/10)")
+        for n in aest:print_available(n,f"({is_wordlike(n)}/10)")
     if rand:
         print(f"\n  RANDOM ({len(rand)}):")
-        for n in rand: print_available(n)
-    print(f"\n  TAKEN: {len([r for r in res if r[1]=='taken'])}")
-    other = [r for r in res if r[1] not in ("available","taken")]
-    if other:
-        print("  OTHER:")
-        for s,c in Counter(s for _,s in other).most_common(5):
-            print(f"    {s}: {c}")
+        for n in rand:print_available(n)
     if av:
-        claim_available_name(av)
-        ans2 = input(f"  Save to desktop? [Y/n]: ").strip().lower()
-        if ans2 != 'n': save_results(av, "wordlist", f"Source: {path}")
+        claim_available_name(av);ans2=input("  Save to desktop? [Y/n]: ").strip().lower()
+        if ans2!='n':save_results(av,"wordlist",f"Source: {path}")
     print("\n--- made by scarn ---\n")
 
-# ── Main ──────────────────────────────────────────────────────
-if __name__ == "__main__":
+if __name__=="__main__":
     try:
-        print(f"{APP_NAME} v{APP_VER}".center(55))
-        print("(Roblox username generator + availability checker)".center(55))
-        print()
-        print("Fetching CSRF token...", end=" ")
-        tok = get_csrf_token()
-        print(f"{'OK' if tok else 'FAILED'}\n")
-
-        mode = input("Mode: [s]can [g]enerate [a]esthetic-only [m]anual [w]ordlist? ").strip().lower()
-
-        if mode == 'm':
-            manual_lookup_mode()
-
-        elif mode == 'w':
-            wordlist_mode(pick_length())
-
-        elif mode == 'a':
-            length = pick_length()
-            target = int(input("How many aesthetic names to find? ") or "5")
-            max_c = int(input("Max checks? ") or "500")
-            found,total = [],0
+        print(f"{APP_NAME} v{APP_VER}".center(55));print("(Roblox username generator + availability checker)".center(55));print();print("Fetching CSRF token...",end=" ");tok=get_csrf_token();print(f"{'OK' if tok else 'FAILED'}\n")
+        mode=input("Mode: [s]can [g]enerate [a]esthetic-only [m]anual [w]ordlist? ").strip().lower()
+        if mode=='m':manual_lookup_mode()
+        elif mode=='w':wordlist_mode(pick_length())
+        elif mode=='a':
+            length=pick_length();target=int(input("How many aesthetic names to find? ") or "5");max_c=int(input("Max checks? ") or "500");found=[];total=0
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-                while len(found) < target and total < max_c:
-                    bs = min(MAX_WORKERS, max_c-total)
-                    names = [generate_aesthetic(length) for _ in range(bs)]
+                while len(found)<target and total<max_c:
+                    bs=min(MAX_WORKERS,max_c-total);names=[generate_aesthetic(length) for _ in range(bs)]
                     for f in as_completed({ex.submit(smart_check,n):n for n in names}):
-                        n,s = f.result(); total += 1
-                        if s=="available": found.append(n)
+                        n,s=f.result();total+=1
+                        if s=="available":found.append(n)
                         p_prog(n,s,len(found),total)
                     time.sleep(REQUEST_DELAY)
-            print(f"\n\n{'='*55}")
-            print(f"  AESTHETIC AVAILABLE ({length} chars): {len(found)}")
-            print(f"{'='*55}")
-            for n in found: print_available(n)
+            print(f"\n\n{'='*55}\n  AESTHETIC AVAILABLE ({length} chars): {len(found)}\n{'='*55}")
+            for n in found:print_available(n)
             if found:
-                claim_available_name(found)
-                ans2 = input(f"  Save to desktop? [Y/n]: ").strip().lower()
-                if ans2 != 'n': save_results(found, f"aesthetic-{length}char")
+                claim_available_name(found);ans2=input("  Save to desktop? [Y/n]: ").strip().lower()
+                if ans2!='n':save_results(found,f"aesthetic-{length}char")
             print("\n--- made by scarn ---\n")
-
-        elif mode == 's':
-            length = pick_length()
-            target = int(input("How many names to find? ") or "5")
-            print("Charset options:")
-            print("  [L] Letters only (a-z)")
-            print("  [M] Mixed letters+digits (default)")
-            print("  [N] Numbers only (0-9)")
-            cs_in = input("Choose: ").strip().lower()
-            if cs_in == 'l': cs = LETTERS
-            elif cs_in == 'n': cs = NUMBERS_ONLY
-            else: cs = CHARSET
-            max_c = int(input("Max checks? ") or "500")
-            found,total = [],0
+        elif mode=='s':
+            length=pick_length();target=int(input("How many names to find? ") or "5");print("Charset options:\n  [L] Letters only (a-z)\n  [M] Mixed letters+digits (default)\n  [N] Numbers only (0-9)");cs_in=input("Choose: ").strip().lower();cs=LETTERS if cs_in=='l' else NUMBERS_ONLY if cs_in=='n' else CHARSET;max_c=int(input("Max checks? ") or "500");found=[];total=0
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-                while len(found) < target and total < max_c:
-                    bs = min(MAX_WORKERS, max_c-total)
-                    names = [generate_random(length,cs) for _ in range(bs)]
+                while len(found)<target and total<max_c:
+                    bs=min(MAX_WORKERS,max_c-total);names=[generate_random(length,cs) for _ in range(bs)]
                     for f in as_completed({ex.submit(smart_check,n):n for n in names}):
-                        n,s = f.result(); total += 1
-                        if s=="available": found.append(n)
+                        n,s=f.result();total+=1
+                        if s=="available":found.append(n)
                         p_prog(n,s,len(found),total)
                     time.sleep(REQUEST_DELAY)
-            print(f"\n\n{'='*55}")
-            print(f"  SCAN DONE - Checked {total}, found {len(found)} available ({length} chars)")
-            print(f"{'='*55}")
-            for n in found: print_available(n)
-            if not found: print("    (none found)")
+            print(f"\n\n{'='*55}\n  SCAN DONE - Checked {total}, found {len(found)} available ({length} chars)\n{'='*55}")
+            for n in found:print_available(n)
+            if not found:print("    (none found)")
             if found:
-                claim_available_name(found)
-                ans2 = input(f"  Save to desktop? [Y/n]: ").strip().lower()
-                if ans2 != 'n': save_results(found, f"scan-{length}char")
+                claim_available_name(found);ans2=input("  Save to desktop? [Y/n]: ").strip().lower()
+                if ans2!='n':save_results(found,f"scan-{length}char")
             print("\n--- made by scarn ---\n")
-
-        else:  # generate batch
-            length = pick_length()
-            batch = int(input("How many names? ") or "100")
-            aeh = input("Aesthetic/word-like? [y/N]: ").strip().lower()=='y'
-            print("Charset options:")
-            print("  [L] Letters only (a-z)")
-            print("  [M] Mixed letters+digits (default)")
-            print("  [N] Numbers only (0-9)")
-            cs_in = input("Choose: ").strip().lower()
-            if cs_in == 'l': cs = LETTERS
-            elif cs_in == 'n': cs = NUMBERS_ONLY
-            else: cs = CHARSET
-            names = [generate_aesthetic(length) if aeh else generate_random(length,cs) for _ in range(batch)]
-            res = []
+        else:
+            length=pick_length();batch=int(input("How many names? ") or "100");aeh=input("Aesthetic/word-like? [y/N]: ").strip().lower()=='y';print("Charset options:\n  [L] Letters only (a-z)\n  [M] Mixed letters+digits (default)\n  [N] Numbers only (0-9)");cs_in=input("Choose: ").strip().lower();cs=LETTERS if cs_in=='l' else NUMBERS_ONLY if cs_in=='n' else CHARSET;names=[generate_aesthetic(length) if aeh else generate_random(length,cs) for _ in range(batch)];res=[]
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
                 for i,f in enumerate(as_completed({ex.submit(smart_check,n):n for n in names})):
-                    res.append(f.result()); n,s = res[-1]
-                    p_prog(n,s,len([r for r in res if r[1]=="available"]),i+1)
-                    if (i+1)%MAX_WORKERS==0: time.sleep(REQUEST_DELAY)
-            av = [n for n,s in res if s=="available"]
-            aest = [n for n in av if is_aesthetic(n)]
-            rand = [n for n in av if not is_aesthetic(n)]
-            print(f"\n\n{'='*55}")
-            print(f"  RESULTS ({length} chars) - Available: {len(av)}/{batch}")
-            print(f"{'='*55}")
+                    res.append(f.result());n,s=res[-1];p_prog(n,s,len([r for r in res if r[1]=="available"]),i+1)
+                    if(i+1)%MAX_WORKERS==0:time.sleep(REQUEST_DELAY)
+            av=[n for n,s in res if s=="available"];aest=[n for n in av if is_aesthetic(n)];rand=[n for n in av if not is_aesthetic(n)]
+            print(f"\n\n{'='*55}\n  RESULTS ({length} chars) - Available: {len(av)}/{batch}\n{'='*55}")
             if aest:
                 print(f"\n  AESTHETIC ({len(aest)}):")
-                for n in aest: print_available(n, f"({is_wordlike(n)}/10)")
+                for n in aest:print_available(n,f"({is_wordlike(n)}/10)")
             if rand:
                 print(f"\n  RANDOM ({len(rand)}):")
-                for n in rand: print_available(n)
-            print(f"\n  TAKEN: {len([r for r in res if r[1]=='taken'])}")
-            other = [r for r in res if r[1] not in ("available","taken")]
-            if other:
-                print("  OTHER:")
-                for s,c in Counter(s for _,s in other).most_common(5):
-                    print(f"    {s}: {c}")
+                for n in rand:print_available(n)
             if av:
-                claim_available_name(av)
-                ans2 = input(f"  Save to desktop? [Y/n]: ").strip().lower()
-                if ans2 != 'n': save_results(av, f"batch-{length}char")
+                claim_available_name(av);ans2=input("  Save to desktop? [Y/n]: ").strip().lower()
+                if ans2!='n':save_results(av,f"batch-{length}char")
             print("\n--- made by scarn ---\n")
-
         input("Press Enter to exit...")
     except KeyboardInterrupt:
-        print("\n\nExiting.")
-        print("--- made by scarn ---")
-        input("Press Enter to exit...")
+        print("\n\nExiting.\n--- made by scarn ---");input("Press Enter to exit...")
