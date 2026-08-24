@@ -1,5 +1,6 @@
 name: Build Windows EXE
 
+# v2.4 clean build: never commits or pushes from inside GitHub Actions.
 on:
   push:
     branches: [main]
