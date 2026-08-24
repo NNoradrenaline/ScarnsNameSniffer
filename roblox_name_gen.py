@@ -35,7 +35,8 @@ PATTERNS_5 = ['CVCVC','CVCV','VCVCV','VCCVC','CVCCV','CVCVV','VVCVC','CCVCC','CV
 PATTERNS_6 = ['CVCVCV','VCVCVC','CVCCVC','VCCVCC','CVCVCC','VCVCCV','CCVCVC','CVCCVV']
 
 APP_NAME = "Scarn's Name Sniffer"
-APP_VER = "2.0"
+APP_VER = "2.1"
+ROBLOX_REGISTRATION_URL = "https://www.roblox.com/NewLogin?mode=registration"
 SAVE_DIR = os.path.join(os.path.expanduser("~"), "Desktop")
 os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -60,7 +61,9 @@ def copy_to_clipboard(text):
         return False
 
 def print_available(name, extra=""):
-    print(f"    -> \033]8;;https://www.roblox.com/signup\033\\\033[92m{name}\033[0m\033]8;;\033\\  {extra}")
+    # v2.1: names are no longer terminal hyperlinks because Roblox does not
+    # reliably preserve signup state through those links. Use the claim menu instead.
+    print(f"    -> \033[92m{name}\033[0m  {extra}")
 
 # ── Scoring ──────────────────────────────────────────────────
 def is_wordlike(name):
@@ -139,18 +142,33 @@ def save_results(names, mode_desc="batch", extra=""):
     print(f"\n  [SAVED] Results written to: {filepath}")
     return filepath
 
+def open_registration_page(name=None):
+    """Copy one username and open Roblox's registration route."""
+    if name:
+        copied = copy_to_clipboard(name)
+        if copied:
+            print(f"    Copied '{name}' to clipboard. Paste it into Roblox with Ctrl+V.")
+        else:
+            print(f"    Username: {name}  (clipboard copy failed; copy it manually)")
+    try:
+        webbrowser.open_new_tab(ROBLOX_REGISTRATION_URL)
+        print("    Opening Roblox registration...")
+    except Exception as e:
+        print(f"    Could not open browser: {e}")
+
 def open_signup_pages(names, max_tabs=10):
-    """Open Roblox signup page for each name (up to max_tabs)."""
+    """Optional legacy bulk-open helper, now using the registration route."""
     count = min(len(names), max_tabs)
-    if count == 0: return
-    print(f"    Opening {count} tab(s) in browser...")
+    if count == 0:
+        return
+    copy_to_clipboard(names[0])
+    print(f"    Opening {count} registration tab(s). '{names[0]}' is copied to clipboard.")
     for i in range(count):
         try:
-            url = "https://www.roblox.com/signup"
             if i == 0:
-                webbrowser.open_new(url)
+                webbrowser.open_new(ROBLOX_REGISTRATION_URL)
             else:
-                webbrowser.open_new_tab(url)
+                webbrowser.open_new_tab(ROBLOX_REGISTRATION_URL)
         except:
             pass
 
@@ -249,6 +267,33 @@ def get_tab_count():
     except:
         return 10
 
+def claim_available_name(names):
+    """Let the user choose one available name, copy it, and open registration."""
+    unique_names = list(dict.fromkeys(names))
+    if not unique_names:
+        return
+
+    print("\n  CLAIM A NAME")
+    print("  " + "-" * 36)
+    for i, name in enumerate(unique_names, 1):
+        print(f"  [{i:>2}] {name}")
+
+    while True:
+        choice = input("\n  Choose a number to claim, [b] bulk open, or Enter to skip: ").strip().lower()
+        if not choice:
+            return
+        if choice == 'b':
+            tabs = get_tab_count()
+            open_signup_pages(unique_names, tabs)
+            return
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(unique_names):
+                chosen = unique_names[idx]
+                open_registration_page(chosen)
+                return
+        print(f"  Enter a number from 1 to {len(unique_names)}, 'b', or press Enter to skip.")
+
 # ── Manual Lookup Mode ────────────────────────────────────────
 def manual_lookup_mode():
     print("\n--- Manual Lookup Mode ---")
@@ -282,11 +327,7 @@ def manual_lookup_mode():
         else:
             print(f"    {n:<15} -> {s}")
     if found:
-        print()
-        ans = input(f"  Open signup in browser? [y/N]: ").strip().lower()
-        if ans == 'y':
-            tabs = get_tab_count()
-            open_signup_pages(found, tabs)
+        claim_available_name(found)
         ans2 = input(f"  Save to desktop? [Y/n]: ").strip().lower()
         if ans2 != 'n': save_results(found, "manual-lookup")
     print("\n--- made by scarn ---\n")
@@ -328,11 +369,7 @@ def wordlist_mode(length):
         for s,c in Counter(s for _,s in other).most_common(5):
             print(f"    {s}: {c}")
     if av:
-        print()
-        ans = input(f"  Open signup in browser? [y/N]: ").strip().lower()
-        if ans == 'y':
-            tabs = get_tab_count()
-            open_signup_pages(av, tabs)
+        claim_available_name(av)
         ans2 = input(f"  Save to desktop? [Y/n]: ").strip().lower()
         if ans2 != 'n': save_results(av, "wordlist", f"Source: {path}")
     print("\n--- made by scarn ---\n")
@@ -374,10 +411,7 @@ if __name__ == "__main__":
             print(f"{'='*55}")
             for n in found: print_available(n)
             if found:
-                ans = input(f"\n  Open signup in browser? [y/N]: ").strip().lower()
-                if ans == 'y':
-                    tabs = get_tab_count()
-                    open_signup_pages(found, tabs)
+                claim_available_name(found)
                 ans2 = input(f"  Save to desktop? [Y/n]: ").strip().lower()
                 if ans2 != 'n': save_results(found, f"aesthetic-{length}char")
             print("\n--- made by scarn ---\n")
@@ -410,11 +444,7 @@ if __name__ == "__main__":
             for n in found: print_available(n)
             if not found: print("    (none found)")
             if found:
-                print()
-                ans = input(f"  Open signup in browser? [y/N]: ").strip().lower()
-                if ans == 'y':
-                    tabs = get_tab_count()
-                    open_signup_pages(found, tabs)
+                claim_available_name(found)
                 ans2 = input(f"  Save to desktop? [Y/n]: ").strip().lower()
                 if ans2 != 'n': save_results(found, f"scan-{length}char")
             print("\n--- made by scarn ---\n")
@@ -457,11 +487,7 @@ if __name__ == "__main__":
                 for s,c in Counter(s for _,s in other).most_common(5):
                     print(f"    {s}: {c}")
             if av:
-                print()
-                ans = input(f"  Open signup in browser? [y/N]: ").strip().lower()
-                if ans == 'y':
-                    tabs = get_tab_count()
-                    open_signup_pages(av, tabs)
+                claim_available_name(av)
                 ans2 = input(f"  Save to desktop? [Y/n]: ").strip().lower()
                 if ans2 != 'n': save_results(av, f"batch-{length}char")
             print("\n--- made by scarn ---\n")
