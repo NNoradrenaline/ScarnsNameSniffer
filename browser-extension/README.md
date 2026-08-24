@@ -13,6 +13,8 @@ When you choose a single name in Name Sniffer, the Windows app generates a stron
 - shows a small panel where you can reveal or copy the generated password
 - lets you press **Enter** to activate Roblox's normal **Create Account / Sign Up** button once the form is filled
 
+Enter-to-submit defaults to **on**. Click the extension icon and uncheck **Press Enter to submit signup** if you want to disable it.
+
 The Enter shortcut does not bypass CAPTCHA, verification, rate limits, disabled buttons, or any other Roblox checks. It only performs the same normal button activation you could do with the mouse.
 
 Passwords are not stored in extension history or plaintext files. When secure saving succeeds, the password is stored by Windows Credential Manager under the current Windows account.
@@ -22,7 +24,8 @@ Passwords are not stored in extension history or plaintext files. When secure sa
 1. Click the **Scarn's Name Sniffer Autofill** extension icon in Chrome or Edge.
 2. Choose the account holder's actual birthday.
 3. Click **Save birthday**.
-4. Run Name Sniffer normally.
+4. Leave **Press Enter to submit signup** enabled if you want the Enter shortcut.
+5. Run Name Sniffer normally.
 
 ## Install in Chrome
 
