@@ -9,8 +9,10 @@
     h1 { font-size: 16px; margin: 0 0 8px; }
     p { color: #9fb0c2; margin: 0 0 14px; }
     label { display: block; font-weight: 700; margin-bottom: 6px; }
-    input { width: 100%; box-sizing: border-box; border: 1px solid #314052; border-radius: 8px; background: #080b10; color: #eef4ff; padding: 9px 10px; }
+    input[type="date"] { width: 100%; box-sizing: border-box; border: 1px solid #314052; border-radius: 8px; background: #080b10; color: #eef4ff; padding: 9px 10px; }
     .row { display: flex; gap: 8px; margin-top: 10px; }
+    .toggle { display:flex; align-items:center; gap:8px; margin-top:14px; font-weight:700; }
+    .toggle input { width:auto; }
     button { flex: 1; border: 1px solid #314052; border-radius: 8px; background: #18212d; color: #eef4ff; padding: 8px 10px; cursor: pointer; font-weight: 700; }
     button.primary { background: #53f59a; color: #04120a; border-color: transparent; }
     #status { min-height: 20px; margin-top: 10px; color: #65d9ff; font-size: 12px; }
@@ -26,9 +28,10 @@
     <button id="save" class="primary">Save birthday</button>
     <button id="clear">Clear</button>
   </div>
+  <label class="toggle"><input id="enter-submit" type="checkbox"> Press Enter to submit signup</label>
   <div id="status"></div>
   <div id="history" class="note"></div>
-  <div class="note">Use the account holder's actual birthday. Passwords are kept in Windows Credential Manager, not extension storage. After the form is filled, press Enter to activate Roblox's normal Create Account button. Any CAPTCHA or verification still works normally.</div>
+  <div class="note">Use the account holder's actual birthday. Passwords stay in Windows Credential Manager, not extension storage. Enter-to-submit uses Roblox's normal Create Account button and does not bypass CAPTCHA, verification, disabled buttons, or rate limits.</div>
   <script src="popup.js"></script>
 </body>
 </html>
