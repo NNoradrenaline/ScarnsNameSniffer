@@ -1,9 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Scarn's Name Sniffer Autofill",
-  "version": "2.2.0",
-  "description": "Autofills Roblox signup with a selected username and locally generated password. Never submits the form.",
-  "permissions": ["clipboardRead", "clipboardWrite"],
+  "version": "2.3.0",
+  "description": "Autofills Roblox signup with a selected username, locally generated password, and your saved birthday. Never submits the form.",
+  "permissions": ["clipboardRead", "clipboardWrite", "storage"],
+  "action": {
+    "default_title": "Scarn's Name Sniffer Autofill",
+    "default_popup": "popup.html"
+  },
   "content_scripts": [
     {
       "matches": ["https://www.roblox.com/CreateAccount*"],
