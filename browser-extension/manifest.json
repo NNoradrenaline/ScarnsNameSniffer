@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Scarn's Name Sniffer Autofill",
-  "version": "2.3.0",
-  "description": "Autofills Roblox signup with a selected username, locally generated password, and your saved birthday. Never submits the form.",
+  "version": "2.4.0",
+  "description": "Autofills Roblox signup and works with Name Sniffer v2.4 secure Windows Credential Manager saving. Never submits the form.",
   "permissions": ["clipboardRead", "clipboardWrite", "storage"],
   "action": {
     "default_title": "Scarn's Name Sniffer Autofill",
