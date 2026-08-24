@@ -7,6 +7,7 @@ on:
     paths:
       - "roblox_name_gen.py"
       - "v25_launcher.py"
+      - "v25_entry.py"
       - "requirements.txt"
       - "icon.ico"
       - "browser-extension/**"
@@ -34,6 +35,7 @@ jobs:
         run: |
           python -m py_compile roblox_name_gen.py
           python -m py_compile v25_launcher.py
+          python -m py_compile v25_entry.py
 
       - name: Install dependencies
         shell: pwsh
@@ -46,9 +48,9 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path "icon.ico") {
-            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" --icon "icon.ico" v25_launcher.py
+            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" --icon "icon.ico" v25_entry.py
           } else {
-            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" v25_launcher.py
+            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" v25_entry.py
           }
 
       - name: Stage v2.5 package
