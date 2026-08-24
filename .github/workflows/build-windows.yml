@@ -1,8 +1,16 @@
 name: Build Windows EXE
 
-# Staging mode for v2.5. Push builds are temporarily disabled while the
-# launcher and browser companion files are updated together.
+# v2.5 clean build: never commits or pushes from inside GitHub Actions.
 on:
+  push:
+    branches: [main]
+    paths:
+      - "roblox_name_gen.py"
+      - "v25_launcher.py"
+      - "requirements.txt"
+      - "icon.ico"
+      - "browser-extension/**"
+      - ".github/workflows/build-windows.yml"
   workflow_dispatch:
 
 permissions:
@@ -25,7 +33,7 @@ jobs:
         shell: pwsh
         run: |
           python -m py_compile roblox_name_gen.py
-          if (Test-Path "v25_launcher.py") { python -m py_compile v25_launcher.py }
+          python -m py_compile v25_launcher.py
 
       - name: Install dependencies
         shell: pwsh
@@ -34,17 +42,16 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
 
-      - name: Build Scarn's Name Sniffer
+      - name: Build Scarn's Name Sniffer v2.5
         shell: pwsh
         run: |
-          $entry = if (Test-Path "v25_launcher.py") { "v25_launcher.py" } else { "roblox_name_gen.py" }
           if (Test-Path "icon.ico") {
-            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" --icon "icon.ico" $entry
+            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" --icon "icon.ico" v25_launcher.py
           } else {
-            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" $entry
+            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" v25_launcher.py
           }
 
-      - name: Stage package
+      - name: Stage v2.5 package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path package | Out-Null
@@ -54,6 +61,6 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: ScarnsNameSniffer-staging-Windows
+          name: ScarnsNameSniffer-v2.5-Windows
           path: package
           if-no-files-found: error
