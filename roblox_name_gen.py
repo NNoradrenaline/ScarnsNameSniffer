@@ -35,30 +35,56 @@ PATTERNS_5 = ['CVCVC','CVCV','VCVCV','VCCVC','CVCCV','CVCVV','VVCVC','CCVCC','CV
 PATTERNS_6 = ['CVCVCV','VCVCVC','CVCCVC','VCCVCC','CVCVCC','VCVCCV','CCVCVC','CVCCVV']
 
 APP_NAME = "Scarn's Name Sniffer"
-APP_VER = "2.1"
+APP_VER = "2.1.1"
 ROBLOX_REGISTRATION_URL = "https://www.roblox.com/NewLogin?mode=registration"
 SAVE_DIR = os.path.join(os.path.expanduser("~"), "Desktop")
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 # ── Clipboard helper ──────────────────────────────────────────
 def copy_to_clipboard(text):
+    """Copy a Roblox username to the Windows clipboard reliably."""
+    text = str(text)
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
     try:
-        encoded = text.encode('utf-16-le')
-        b64 = __import__('base64').b64encode(encoded).decode()
         proc = subprocess.Popen(
-            ['powershell.exe', '-NoProfile', '-Command',
-             f'[System.Windows.Forms.Clipboard]::SetText([System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String("{b64}"))); Write-Output "ok"'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            ["clip.exe"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=creationflags,
         )
-        proc.communicate(timeout=5)
-        return True
-    except:
-        try:
-            with open(os.environ.get('TEMP','') + '\\_sniff_last.txt', 'w') as f:
-                f.write(text)
-        except:
-            pass
-        return False
+        proc.communicate(text, timeout=5)
+        if proc.returncode == 0:
+            return True
+    except Exception:
+        pass
+
+    try:
+        proc = subprocess.Popen(
+            [
+                "powershell.exe", "-NoProfile", "-NonInteractive",
+                "-Command", "[Console]::In.ReadToEnd() | Set-Clipboard"
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=creationflags,
+        )
+        proc.communicate(text, timeout=5)
+        if proc.returncode == 0:
+            return True
+    except Exception:
+        pass
+
+    try:
+        with open(os.path.join(os.environ.get('TEMP', ''), '_sniff_last.txt'), 'w', encoding='utf-8') as f:
+            f.write(text)
+    except Exception:
+        pass
+    return False
 
 def print_available(name, extra=""):
     # v2.1: names are no longer terminal hyperlinks because Roblox does not
@@ -161,8 +187,11 @@ def open_signup_pages(names, max_tabs=10):
     count = min(len(names), max_tabs)
     if count == 0:
         return
-    copy_to_clipboard(names[0])
-    print(f"    Opening {count} registration tab(s). '{names[0]}' is copied to clipboard.")
+    copied = copy_to_clipboard(names[0])
+    if copied:
+        print(f"    Opening {count} registration tab(s). '{names[0]}' is copied to clipboard.")
+    else:
+        print(f"    Opening {count} registration tab(s). Clipboard copy failed; copy '{names[0]}' manually.")
     for i in range(count):
         try:
             if i == 0:
