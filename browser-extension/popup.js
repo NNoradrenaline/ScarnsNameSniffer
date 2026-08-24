@@ -5,9 +5,12 @@
   const status = document.getElementById("status");
   const save = document.getElementById("save");
   const clear = document.getElementById("clear");
+  const history = document.getElementById("history");
 
-  chrome.storage.local.get({ birthday: "" }, ({ birthday }) => {
+  chrome.storage.local.get({ birthday: "", accountHistory: [] }, ({ birthday, accountHistory }) => {
     input.value = birthday || "";
+    const count = Array.isArray(accountHistory) ? accountHistory.length : 0;
+    history.textContent = `${count} account${count === 1 ? "" : "s"} recorded locally. Passwords are kept in Windows Credential Manager.`;
   });
 
   save.addEventListener("click", () => {
