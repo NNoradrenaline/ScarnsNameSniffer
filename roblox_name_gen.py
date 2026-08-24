@@ -35,8 +35,8 @@ PATTERNS_5 = ['CVCVC','CVCV','VCVCV','VCCVC','CVCCV','CVCVV','VVCVC','CCVCC','CV
 PATTERNS_6 = ['CVCVCV','VCVCVC','CVCCVC','VCCVCC','CVCVCC','VCVCCV','CCVCVC','CVCCVV']
 
 APP_NAME = "Scarn's Name Sniffer"
-APP_VER = "2.1.1"
-ROBLOX_REGISTRATION_URL = "https://www.roblox.com/NewLogin?mode=registration"
+APP_VER = "2.1.2"
+ROBLOX_REGISTRATION_URL = "https://www.roblox.com/CreateAccount"
 SAVE_DIR = os.path.join(os.path.expanduser("~"), "Desktop")
 os.makedirs(SAVE_DIR, exist_ok=True)
 
