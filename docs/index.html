@@ -3,30 +3,27 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Scarn's Name Sniffer v2.6 is a Windows Roblox username generator and verified availability checker with adaptive scanning, caching, resume, watchlists, and live metrics." />
-  <title>Scarn's Name Sniffer v2.6</title>
+  <meta name="description" content="Scarn's Name Sniffer v2.5 is a Windows Roblox username generator and availability checker with secure credential storage and an optional Chrome/Edge autofill companion." />
+  <title>Scarn's Name Sniffer v2.5</title>
   <style>
     :root { color-scheme: dark; --bg:#080b10; --panel:#0f141c; --panel2:#141b25; --text:#eef4ff; --muted:#94a3b8; --green:#53f59a; --cyan:#65d9ff; --line:#243041; }
     * { box-sizing:border-box; }
-    html { scroll-behavior:smooth; }
     body { margin:0; font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:radial-gradient(circle at 50% -20%,#152236 0,#080b10 38rem); color:var(--text); }
     a { color:inherit; }
-    .wrap { width:min(1080px,calc(100% - 36px)); margin:auto; }
+    .wrap { width:min(1060px,calc(100% - 36px)); margin:auto; }
     nav { display:flex; justify-content:space-between; align-items:center; padding:24px 0; }
-    .brand { font-weight:800; letter-spacing:.02em; }
+    .brand { font-weight:800; }
     .navlinks { display:flex; gap:18px; color:var(--muted); font-size:14px; }
-    .hero { padding:78px 0 48px; text-align:center; }
-    .eyebrow { display:inline-flex; gap:8px; align-items:center; padding:8px 12px; border:1px solid var(--line); border-radius:999px; color:var(--green); background:#0c1319; font:600 13px ui-monospace,SFMono-Regular,Consolas,monospace; }
-    h1 { font-size:clamp(44px,8vw,82px); line-height:.95; letter-spacing:-.055em; margin:24px auto 22px; max-width:930px; }
-    .lead { color:var(--muted); font-size:clamp(18px,2.4vw,22px); line-height:1.6; max-width:790px; margin:0 auto 30px; }
+    .hero { padding:78px 0 50px; text-align:center; }
+    .eyebrow { display:inline-flex; padding:8px 12px; border:1px solid var(--line); border-radius:999px; color:var(--green); background:#0c1319; font:600 13px ui-monospace,SFMono-Regular,Consolas,monospace; }
+    h1 { font-size:clamp(44px,8vw,82px); line-height:.95; letter-spacing:-.055em; margin:24px auto 22px; max-width:900px; }
+    .lead { color:var(--muted); font-size:clamp(18px,2.4vw,22px); line-height:1.6; max-width:760px; margin:0 auto 30px; }
     .actions { display:flex; flex-wrap:wrap; justify-content:center; gap:12px; }
     .btn { text-decoration:none; border-radius:10px; padding:13px 18px; font-weight:800; border:1px solid var(--line); background:var(--panel); }
     .btn.primary { background:var(--green); color:#04120a; border-color:transparent; }
-    .terminal { margin:50px auto 0; max-width:920px; text-align:left; border:1px solid var(--line); background:#080c11; border-radius:16px; overflow:hidden; box-shadow:0 30px 90px #0008; }
-    .bar { display:flex; gap:7px; padding:12px 14px; border-bottom:1px solid var(--line); background:#0d1219; }
-    .dot { width:10px; height:10px; border-radius:50%; background:#344154; }
+    .terminal { margin:50px auto 0; max-width:820px; text-align:left; border:1px solid var(--line); background:#080c11; border-radius:16px; overflow:hidden; box-shadow:0 30px 90px #0008; }
+    .bar { padding:12px 14px; border-bottom:1px solid var(--line); background:#0d1219; }
     pre { margin:0; padding:22px; overflow:auto; font:14px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace; color:#d8e5f5; }
-    pre b { color:var(--green); }
     section { padding:54px 0; }
     h2 { font-size:36px; letter-spacing:-.035em; margin:0 0 12px; }
     .sub { color:var(--muted); margin:0 0 28px; line-height:1.6; }
@@ -34,78 +31,62 @@
     .card { border:1px solid var(--line); background:linear-gradient(180deg,var(--panel2),var(--panel)); border-radius:14px; padding:20px; }
     .card strong { display:block; font-size:17px; margin-bottom:8px; }
     .card p { color:var(--muted); line-height:1.55; margin:0; font-size:14px; }
-    .callout { border-left:3px solid var(--green); background:#0d1712; color:#cdeedb; padding:17px 19px; border-radius:8px; line-height:1.6; }
     .steps { counter-reset:step; display:grid; gap:12px; }
     .step { counter-increment:step; padding:18px 20px 18px 62px; position:relative; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
     .step:before { content:counter(step); position:absolute; left:18px; top:15px; width:28px; height:28px; display:grid; place-items:center; border-radius:50%; background:var(--green); color:#04120a; font-weight:900; }
     code { color:var(--cyan); }
     footer { border-top:1px solid var(--line); padding:30px 0 44px; color:var(--muted); font-size:14px; display:flex; justify-content:space-between; gap:20px; }
-    @media (max-width:760px) { .grid { grid-template-columns:1fr; } .navlinks { display:none; } .hero { padding-top:52px; } footer { flex-direction:column; } }
+    @media (max-width:760px) { .grid { grid-template-columns:1fr; } .navlinks { display:none; } footer { flex-direction:column; } }
   </style>
 </head>
 <body>
   <div class="wrap">
     <nav>
       <div class="brand">🔎 Scarn's Name Sniffer</div>
-      <div class="navlinks"><a href="#features">Engine</a><a href="#download">Download</a><a href="https://github.com/NNoradrenaline/ScarnsNameSniffer">GitHub</a></div>
+      <div class="navlinks"><a href="#features">Features</a><a href="#download">Download</a><a href="https://github.com/NNoradrenaline/ScarnsNameSniffer">GitHub</a></div>
     </nav>
-
     <main>
       <div class="hero">
-        <div class="eyebrow">WINDOWS · v2.6 · VERIFIED SCANNING</div>
-        <h1>Find names faster. Verify the ones worth keeping.</h1>
-        <p class="lead">A Roblox username scanner with two-stage verification, adaptive concurrency, SQLite caching, resumable scans, watchlists, live ETA and latency metrics, and ranked candidate generation.</p>
+        <div class="eyebrow">WINDOWS · v2.5 · MADE BY SCARN</div>
+        <h1>Sniff out a Roblox name worth keeping.</h1>
+        <p class="lead">Generate short usernames, check availability, hunt for word-like names, scan custom wordlists, save finds, and optionally use the browser companion for signup autofill.</p>
         <div class="actions">
           <a class="btn primary" href="https://github.com/NNoradrenaline/ScarnsNameSniffer/releases/latest">Download latest release</a>
           <a class="btn" href="https://github.com/NNoradrenaline/ScarnsNameSniffer">View source</a>
         </div>
         <div class="terminal">
-          <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
-          <pre>                     Scarn's Name Sniffer v2.6
-                    Verified username scanning engine
+          <div class="bar">● ● ●</div>
+          <pre>                 Scarn's Name Sniffer v2.5
+       (Roblox username generator + availability checker)
 
-  [s] smart scan     [g] generated batch   [a] aesthetic scan
-  [m] manual lookup  [w] watchlist         [r] resume scan
-  [c] credentials    [d] diagnostics       [l] legacy wordlist
+Fetching CSRF token... OK
 
-  1842/5000  <b>verified:7</b>  maybe:1  18.4/s  ETA 2m 51s
-  workers:9  lat:188ms  cache:213</pre>
+Mode: [s]can [g]enerate [a]esthetic-only [m]anual [w]ordlist [c]redentials?</pre>
         </div>
       </div>
-
       <section id="features">
-        <h2>A scanner engine, not just a random-name loop.</h2>
-        <p class="sub">v2.6 spends requests more intelligently and gives useful information back while it works.</p>
+        <h2>Built for the name hunt.</h2>
+        <p class="sub">Fast checks, practical generation modes, and a local credential workflow without requiring an existing Roblox password or cookie.</p>
         <div class="grid">
-          <div class="card"><strong>✓ Two-stage verification</strong><p>Potentially available names get a second Roblox username lookup before receiving the VERIFIED label.</p></div>
-          <div class="card"><strong>⚡ Adaptive workers</strong><p>Concurrency increases when responses are healthy and backs off automatically when rate limiting or latency rises.</p></div>
-          <div class="card"><strong>💾 SQLite cache</strong><p>Recent checks are cached locally, reducing duplicate requests and keeping scan/history data between launches.</p></div>
-          <div class="card"><strong>⏯ Resume scans</strong><p>Ctrl+C safely checkpoints long scans. Pick Resume later and continue with the same target and configuration.</p></div>
-          <div class="card"><strong>★ Watchlist</strong><p>Track specific names with priority levels and re-check them for status changes when you want.</p></div>
-          <div class="card"><strong>📊 Live telemetry</strong><p>See throughput, ETA, API latency, cache hits, worker count, verified results, and rate-limit behavior live.</p></div>
-          <div class="card"><strong>🧠 Ranked generation</strong><p>Generate multiple candidates and prioritize cleaner names using a 0–100 quality score.</p></div>
-          <div class="card"><strong>4 + 5 + 6 together</strong><p>Scan one length or combine several lengths in the same run.</p></div>
-          <div class="card"><strong>🩺 Diagnostics</strong><p>Check the database, credential API, clipboard helper, browser companion files, and Roblox API connectivity.</p></div>
+          <div class="card"><strong>🔍 Availability scan</strong><p>Generate usernames and check them against Roblox's validation service.</p></div>
+          <div class="card"><strong>✨ Aesthetic mode</strong><p>Favor more pronounceable results using consonant/vowel patterns and word-like scoring.</p></div>
+          <div class="card"><strong>⌨️ Manual + wordlist modes</strong><p>Check names you already have or feed the tool a custom wordlist.</p></div>
+          <div class="card"><strong>🔐 Saved Accounts</strong><p>Generated single-name credentials can be stored locally in Windows Credential Manager.</p></div>
+          <div class="card"><strong>🌐 Autofill companion</strong><p>Optional Chrome/Edge extension fills birthday, username, and generated password.</p></div>
+          <div class="card"><strong>↵ Enter to submit</strong><p>After autofill, press Enter to activate Roblox's normal visible signup button.</p></div>
         </div>
       </section>
-
       <section id="download">
         <h2>Download from Releases</h2>
-        <p class="sub">Normal users do not need Python or PyInstaller. Grab the prebuilt Windows release and optional Chrome/Edge companion.</p>
+        <p class="sub">Normal users do not need Python or PyInstaller.</p>
         <div class="steps">
-          <div class="step"><strong>Open GitHub Releases.</strong><br><span class="sub">Choose the newest v2.6 release and download <code>ScarnsNameSniffer.exe</code>.</span></div>
-          <div class="step"><strong>Optional browser companion.</strong><br><span class="sub">Download <code>ScarnsNameSniffer-Autofill-v2.6.zip</code>, extract it, then load the folder from Chrome or Edge's extensions page.</span></div>
-          <div class="step"><strong>Start scanning.</strong><br><span class="sub">Use smart scan for general hunting, aesthetic scan for cleaner candidates, Watchlist for names you care about, or Diagnostics when something looks wrong.</span></div>
+          <div class="step"><strong>Open GitHub Releases.</strong><br>Download the latest v2.5 Windows release.</div>
+          <div class="step"><strong>Run the app.</strong><br>Launch <code>ScarnsNameSniffer.exe</code>.</div>
+          <div class="step"><strong>Optional extension.</strong><br>Extract <code>ScarnsNameSniffer-Autofill-v2.5.zip</code>, enable Developer mode in Chrome/Edge, and use Load unpacked on the folder containing <code>manifest.json</code>.</div>
         </div>
       </section>
-
-      <section>
-        <h2>Local-first data.</h2>
-        <div class="callout"><strong>Passwords do not go into the v2.6 database.</strong> Username checks, cache entries, checkpoints, and watchlist metadata use local SQLite. Generated signup credentials continue to use Windows Credential Manager. The tool does not require an existing Roblox password, cookie, or authentication token.</div>
-      </section>
     </main>
-
-    <footer><span>Unofficial community tool. Not affiliated with Roblox Corporation.</span><span>Scarn's Name Sniffer v2.6</span></footer>
+    <footer><span>Unofficial community tool. Not affiliated with Roblox Corporation.</span><span>Scarn's Name Sniffer v2.5</span></footer>
   </div>
 </body>
 </html>
