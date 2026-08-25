@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""Scarn's Name Sniffer v2.5 executable entrypoint.
-
-Keeps the stable v2.4 scanner core while applying v2.5 account-management
-and browser-companion behavior before starting the v2.5 launcher.
-"""
+"""Scarn's Name Sniffer v2.5 executable entrypoint."""
 
 import webbrowser
 
 import roblox_name_gen as base
 import v25_launcher as launcher
+import v25_scanner as scanner
 
 APP_VER = "2.5"
 base.APP_VER = APP_VER
+launcher.APP_VER = APP_VER
+scanner.APP_VER = APP_VER
 
 
 def open_registration_page_v25(name=None):
@@ -48,11 +47,8 @@ def open_registration_page_v25(name=None):
         print(f"    Could not open browser: {exc}")
 
 
-# base.claim_available_name resolves this function from the base module at
-# runtime, so replacing it here upgrades all claim flows without duplicating
-# the scanner implementation.
 base.open_registration_page = open_registration_page_v25
 
 
 if __name__ == "__main__":
-    launcher.run_main()
+    scanner.run_main()
