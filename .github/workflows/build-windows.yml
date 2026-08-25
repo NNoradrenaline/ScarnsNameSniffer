@@ -1,14 +1,13 @@
 name: Build Windows EXE
 
-# v2.6 clean build: never commits or pushes from inside GitHub Actions.
+# v2.5 clean build: never commits or pushes from inside GitHub Actions.
 on:
   push:
     branches: [main]
     paths:
       - "roblox_name_gen.py"
       - "v25_launcher.py"
-      - "v26_engine.py"
-      - "v26_entry.py"
+      - "v25_entry.py"
       - "requirements.txt"
       - "icon.ico"
       - "browser-extension/**"
@@ -36,9 +35,7 @@ jobs:
         run: |
           python -m py_compile roblox_name_gen.py
           python -m py_compile v25_launcher.py
-          python -m py_compile v26_engine.py
-          python -m py_compile v26_entry.py
-          python -m py_compile tests/test_v26_engine.py
+          python -m py_compile v25_entry.py
 
       - name: Install dependencies
         shell: pwsh
@@ -47,41 +44,34 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
 
-      - name: Smoke test v2.6 engine
-        shell: pwsh
-        run: |
-          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP "ScarnsNameSnifferSmoke"
-          New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
-          python -c "import v26_engine; v26_engine.init_db(); print('v2.6 engine smoke test OK')"
-
-      - name: Build Scarn's Name Sniffer v2.6
+      - name: Build Scarn's Name Sniffer v2.5
         shell: pwsh
         run: |
           if (Test-Path "icon.ico") {
-            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" --icon "icon.ico" v26_entry.py
+            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" --icon "icon.ico" v25_entry.py
           } else {
-            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" v26_entry.py
+            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" v25_entry.py
           }
 
-      - name: Stage v2.6 package
+      - name: Stage v2.5 package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path package | Out-Null
           Copy-Item dist/ScarnsNameSniffer.exe package/ScarnsNameSniffer.exe
           Copy-Item browser-extension package/browser-extension -Recurse
-          Compress-Archive -Path browser-extension\* -DestinationPath package\ScarnsNameSniffer-Autofill-v2.6.zip -Force
-          Compress-Archive -Path browser-extension\* -DestinationPath ScarnsNameSniffer-Autofill-v2.6.zip -Force
+          Compress-Archive -Path browser-extension\* -DestinationPath package\ScarnsNameSniffer-Autofill-v2.5.zip -Force
+          Compress-Archive -Path browser-extension\* -DestinationPath ScarnsNameSniffer-Autofill-v2.5.zip -Force
 
       - name: Upload full Windows + extension bundle
         uses: actions/upload-artifact@v4
         with:
-          name: ScarnsNameSniffer-v2.6-Windows
+          name: ScarnsNameSniffer-v2.5-Windows
           path: package
           if-no-files-found: error
 
       - name: Upload release-ready extension ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: ScarnsNameSniffer-v2.6-Autofill-Extension
-          path: ScarnsNameSniffer-Autofill-v2.6.zip
+          name: ScarnsNameSniffer-v2.5-Autofill-Extension
+          path: ScarnsNameSniffer-Autofill-v2.5.zip
           if-no-files-found: error
