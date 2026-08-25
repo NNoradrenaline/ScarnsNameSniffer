@@ -7,6 +7,7 @@ on:
     paths:
       - "roblox_name_gen.py"
       - "v25_launcher.py"
+      - "v25_scanner.py"
       - "v25_entry.py"
       - "requirements.txt"
       - "icon.ico"
@@ -35,6 +36,7 @@ jobs:
         run: |
           python -m py_compile roblox_name_gen.py
           python -m py_compile v25_launcher.py
+          python -m py_compile v25_scanner.py
           python -m py_compile v25_entry.py
 
       - name: Install dependencies
