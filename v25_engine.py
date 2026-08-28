@@ -163,6 +163,7 @@ class HistoryStore:
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA temp_store=MEMORY")
         self.conn.execute("PRAGMA cache_size=-16000")
+        self.conn.execute("PRAGMA mmap_size=268435456")
         self.query_chunk_size = 800
         try:
             for row in self.conn.execute("PRAGMA compile_options"):
@@ -292,7 +293,11 @@ def mutate_word(word,target_length=None,limit=200):
         out=expanded
     return sorted(out,key=lambda n:(-score_username(n),n))[:limit]
 def save_checkpoint(data):
-    ensure_support_files(); payload=dict(data);payload["saved_at"]=utc_iso();checkpoint_path().write_text(json.dumps(payload,indent=2),encoding="utf-8");return checkpoint_path()
+    ensure_support_files()
+    payload=dict(data)
+    payload["saved_at"]=utc_iso()
+    checkpoint_path().write_text(json.dumps(payload,separators=(",",":")),encoding="utf-8")
+    return checkpoint_path()
 def load_checkpoint():
     p=checkpoint_path()
     if not p.exists():return None
