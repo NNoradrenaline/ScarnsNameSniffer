@@ -60,6 +60,7 @@ class FilterConfig:
 class ScanStats:
     started_at: float
     checked:int=0; network_checks:int=0; cache_hits:int=0; available:int=0; taken:int=0; inappropriate:int=0; other:int=0
+    http_requests:int=0; bulk_requests:int=0; bulk_resolved:int=0; individual_validations:int=0
     def record(self,status,cached=False):
         self.checked+=1; self.cache_hits+=int(cached); self.network_checks+=int(not cached)
         if status=="available": self.available+=1
@@ -88,7 +89,12 @@ class AdaptiveWorkers:
 
 class HistoryStore:
     def __init__(self,path=None):
-        self.path=Path(path or db_path()); self.path.parent.mkdir(parents=True,exist_ok=True); self.conn=sqlite3.connect(self.path); self.conn.row_factory=sqlite3.Row; self._init_schema()
+        self.path=Path(path or db_path()); self.path.parent.mkdir(parents=True,exist_ok=True); self.conn=sqlite3.connect(self.path); self.conn.row_factory=sqlite3.Row
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
+        self.conn.execute("PRAGMA temp_store=MEMORY")
+        self.conn.execute("PRAGMA cache_size=-16000")
+        self._init_schema()
     def _init_schema(self):
         self.conn.executescript("""
         CREATE TABLE IF NOT EXISTS checks(username TEXT PRIMARY KEY,status TEXT NOT NULL,checked_at REAL NOT NULL,score INTEGER NOT NULL DEFAULT 0,mode TEXT NOT NULL DEFAULT '');
@@ -97,15 +103,37 @@ class HistoryStore:
         CREATE TABLE IF NOT EXISTS watchlist(username TEXT PRIMARY KEY,added_at REAL NOT NULL,note TEXT NOT NULL DEFAULT '');
         """); self.conn.commit()
     def close(self): self.conn.close()
+    def record_many(self,records,checked_at=None):
+        rows=[]
+        now=utc_now_ts() if checked_at is None else float(checked_at)
+        for record in records:
+            if isinstance(record,dict):
+                rows.append((str(record["username"]).lower(),str(record["status"]),float(record.get("checked_at_ts",now)),int(record.get("score",0)),str(record.get("mode",""))))
+            else:
+                username,status,score,mode=record
+                rows.append((str(username).lower(),str(status),now,int(score),str(mode)))
+        if not rows:return
+        self.conn.executemany("""INSERT INTO checks(username,status,checked_at,score,mode) VALUES(?,?,?,?,?) ON CONFLICT(username) DO UPDATE SET status=excluded.status,checked_at=excluded.checked_at,score=excluded.score,mode=excluded.mode""",rows)
+        self.conn.commit()
     def record(self,username,status,score=0,mode=""):
-        self.conn.execute("""INSERT INTO checks(username,status,checked_at,score,mode) VALUES(?,?,?,?,?) ON CONFLICT(username) DO UPDATE SET status=excluded.status,checked_at=excluded.checked_at,score=excluded.score,mode=excluded.mode""",(username.lower(),status,utc_now_ts(),int(score),mode)); self.conn.commit()
+        self.record_many([(username,status,score,mode)])
     def get(self,username): return self.conn.execute("SELECT * FROM checks WHERE username=?",(username.lower(),)).fetchone()
+    def cached_status_many(self,usernames,now=None):
+        names=list(dict.fromkeys(str(name).lower() for name in usernames if name))
+        if not names:return {}
+        current=utc_now_ts() if now is None else float(now)
+        result={}
+        for offset in range(0,len(names),800):
+            chunk=names[offset:offset+800]
+            placeholders=",".join("?" for _ in chunk)
+            rows=self.conn.execute(f"SELECT username,status,checked_at FROM checks WHERE username IN ({placeholders})",chunk).fetchall()
+            for row in rows:
+                ttl=ttl_for_status(row["status"])
+                if ttl>0 and current-float(row["checked_at"])<=ttl:
+                    result[row["username"]]=row["status"]
+        return result
     def cached_status(self,username,now=None):
-        row=self.get(username)
-        if row is None:return None
-        ttl=ttl_for_status(row["status"])
-        if ttl<=0:return None
-        return row["status"] if (now or utc_now_ts())-float(row["checked_at"])<=ttl else None
+        return self.cached_status_many([username],now).get(username.lower())
     def add_watch(self,username,note=""):
         self.conn.execute("""INSERT INTO watchlist(username,added_at,note) VALUES(?,?,?) ON CONFLICT(username) DO UPDATE SET note=excluded.note""",(username.lower(),utc_now_ts(),note)); self.conn.commit()
     def remove_watch(self,username): self.conn.execute("DELETE FROM watchlist WHERE username=?",(username.lower(),)); self.conn.commit()
