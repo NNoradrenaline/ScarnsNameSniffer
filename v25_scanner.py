@@ -7,7 +7,7 @@ import shutil
 import sys
 import time
 import webbrowser
-from collections import deque
+from collections import Counter, deque
 from pathlib import Path
 
 import requests
@@ -137,19 +137,22 @@ def print_available_live(name):
     print(f"  >>> AVAILABLE  {name:<12} score {score:>3}/100 {eng.score_label(score)}")
 
 
-def generate_unique(count, generator, filters, banned, seen):
+def generate_unique(count, generator, filters, banned, seen=None, source_unique=False):
     out = []
     attempts = 0
     max_attempts = max(200, count * 80)
+    if seen is None:
+        seen = set()
     while len(out) < count and attempts < max_attempts:
         attempts += 1
         try:
             name = generator().lower()
         except StopIteration:
             break
-        if name in seen:
-            continue
-        seen.add(name)
+        if not source_unique:
+            if name in seen:
+                continue
+            seen.add(name)
         if eng.passes_filters(name, filters, banned):
             out.append(name)
     return out
@@ -176,28 +179,37 @@ def check_candidates(
         return results
 
     cached_map = store.cached_status_many(candidates)
-    uncached = []
-    for name in candidates:
-        cached = cached_map.get(name)
-        if cached is None:
-            uncached.append(name)
-            continue
+    uncached = [name for name in candidates if name not in cached_map]
 
-        stats.record(cached, cached=True)
-        if collect_rows:
-            score = eng.score_username(name) if cached == "available" else 0
-            results.append(
-                {
-                    "username": name,
-                    "status": cached,
-                    "score": score,
-                    "length": len(name),
-                    "checked_at": eng.utc_iso(),
-                }
-            )
-        if cached == "available" and name not in found:
-            found.append(name)
-            print_available_live(name)
+    if cached_map:
+        counts = Counter(cached_map.values())
+        stats.checked += len(cached_map)
+        stats.cache_hits += len(cached_map)
+        stats.available += counts.get("available", 0)
+        stats.taken += counts.get("taken", 0)
+        stats.inappropriate += counts.get("inappropriate", 0)
+        stats.other += (
+            len(cached_map)
+            - counts.get("available", 0)
+            - counts.get("taken", 0)
+            - counts.get("inappropriate", 0)
+        )
+
+        for name, cached in cached_map.items():
+            if collect_rows:
+                score = eng.score_username(name) if cached == "available" else 0
+                results.append(
+                    {
+                        "username": name,
+                        "status": cached,
+                        "score": score,
+                        "length": len(name),
+                        "checked_at": eng.utc_iso(),
+                    }
+                )
+            if cached == "available" and name not in found:
+                found.append(name)
+                print_available_live(name)
 
     if cached_map:
         dashboard(
@@ -229,23 +241,28 @@ def check_candidates(
 
         if lookup.ok:
             existing = lookup.existing
-            for name in chunk:
-                if name in existing:
-                    stats.record("taken", cached=False)
-                    stats.bulk_resolved += 1
-                    pending_records.append((name, "taken", 0, mode))
-                    if collect_rows:
-                        results.append(
-                            {
-                                "username": name,
-                                "status": "taken",
-                                "score": 0,
-                                "length": len(name),
-                                "checked_at": eng.utc_iso(),
-                            }
-                        )
-                else:
-                    survivors.append(name)
+            taken_count = len(existing)
+            if taken_count:
+                stats.checked += taken_count
+                stats.network_checks += taken_count
+                stats.taken += taken_count
+                stats.bulk_resolved += taken_count
+                pending_records.extend((name, "taken", 0, mode) for name in existing)
+
+                if collect_rows:
+                    checked_at = eng.utc_iso()
+                    results.extend(
+                        {
+                            "username": name,
+                            "status": "taken",
+                            "score": 0,
+                            "length": len(name),
+                            "checked_at": checked_at,
+                        }
+                        for name in existing
+                    )
+
+            survivors.extend(name for name in chunk if name not in existing)
 
             dashboard(
                 stats,
@@ -266,10 +283,9 @@ def check_candidates(
                 "ratelimited" if lookup.status_code == 429 else (lookup.error or "bulk_error")
             )
 
-    if pending_records:
-        store.record_many(pending_records)
-
     if stop_after_available is not None and len(found) >= stop_after_available:
+        if pending_records:
+            store.record_many(pending_records)
         return results
 
     # Validate only bulk survivors. Score calculation is deferred until a name
@@ -277,15 +293,15 @@ def check_candidates(
     validation_records = []
     offset = 0
 
-    while offset < len(survivors):
-        if stop_after_available is not None and len(found) >= stop_after_available:
-            break
+    with base.ThreadPoolExecutor(max_workers=adaptive.maximum) as executor:
+        while offset < len(survivors):
+            if stop_after_available is not None and len(found) >= stop_after_available:
+                break
 
-        wave_size = min(adaptive.workers, len(survivors) - offset)
-        wave = survivors[offset:offset + wave_size]
-        offset += wave_size
+            wave_size = min(adaptive.workers, len(survivors) - offset)
+            wave = survivors[offset:offset + wave_size]
+            offset += wave_size
 
-        with base.ThreadPoolExecutor(max_workers=adaptive.workers) as executor:
             futures = {executor.submit(base.smart_check, name): name for name in wave}
             wave_statuses = []
 
@@ -328,16 +344,17 @@ def check_candidates(
                     name,
                 )
 
-        before = adaptive.workers
-        adaptive.observe(wave_statuses + bulk_status_signals)
-        if "ratelimited" in wave_statuses:
-            print("\n  Signup validator rate-limited. Cooling down before continuing.")
-            time.sleep(2.0)
-        elif adaptive.workers < before:
-            time.sleep(0.15)
+            before = adaptive.workers
+            adaptive.observe(wave_statuses + bulk_status_signals)
+            if "ratelimited" in wave_statuses:
+                print("\n  Signup validator rate-limited. Cooling down before continuing.")
+                time.sleep(2.0)
+            elif adaptive.workers < before:
+                time.sleep(0.15)
 
-    if validation_records:
-        store.record_many(validation_records)
+    all_records = pending_records + validation_records
+    if all_records:
+        store.record_many(all_records)
 
     dashboard(
         stats,
@@ -465,7 +482,14 @@ def run_target_scan(length, target, max_checks, filters, charset_mode="m", aesth
     try:
         while len(found) < target and stats.checked < max_checks:
             batch_size = min(TURBO_WINDOW_SIZE, max_checks - stats.checked)
-            candidates = generate_unique(batch_size, generator, filters, banned, seen)
+            candidates = generate_unique(
+                batch_size,
+                generator,
+                filters,
+                banned,
+                seen if aesthetic else None,
+                source_unique=not aesthetic,
+            )
             if not candidates:
                 print("\nUsername space exhausted or no more candidates passed the filters.")
                 break
@@ -591,7 +615,14 @@ def generate_mode():
     else:
         generator = build_unique_generator(length, chars, filters).__next__
     banned = eng.load_banned_patterns()
-    names = generate_unique(count, generator, filters, banned, set())
+    names = generate_unique(
+        count,
+        generator,
+        filters,
+        banned,
+        set() if aesthetic else None,
+        source_unique=not aesthetic,
+    )
     store = eng.HistoryStore()
     stats = eng.ScanStats(time.time())
     adaptive = eng.AdaptiveWorkers()
@@ -857,7 +888,6 @@ def run_main():
     print("(Roblox username search engine + availability checker)".center(74))
     print_paths()
     print("\nCSRF token: lazy-loaded only if a bulk survivor needs signup validation.")
-    check_for_update(silent=True)
     if eng.load_checkpoint():
         print("\nUnfinished scan found. Choose [r] to resume it.")
 
