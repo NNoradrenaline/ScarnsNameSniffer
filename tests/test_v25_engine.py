@@ -45,15 +45,14 @@ def test_mutation_engine_is_unique_ranked_and_length_aware():
     assert scores == sorted(scores, reverse=True)
 
 
-def test_adaptive_workers_increase_slowly_and_back_off_on_rate_limit():
-    a = eng.AdaptiveWorkers(workers=12, minimum=6, maximum=20)
+def test_adaptive_workers_use_aimd_growth_and_hard_rate_limit_backoff():
+    a = eng.AdaptiveWorkers(workers=12, minimum=4, maximum=32)
     a.observe(["taken"] * 12)
-    a.observe(["available"] + ["taken"] * 11)
     assert a.workers == 12
-    a.observe(["taken"] * 12)
-    assert a.workers == 14
-    a.observe(["ratelimited"] + ["taken"] * 13)
-    assert a.workers == 10
+    a.observe(["available"] + ["taken"] * 11)
+    assert a.workers == 16
+    a.observe(["ratelimited"] + ["taken"] * 15)
+    assert a.workers == 8
 
 
 def test_history_cache_expiry_and_watchlist(tmp_path):
@@ -135,3 +134,21 @@ def test_portable_mode_and_state_dir(monkeypatch, tmp_path):
     assert eng.portable_mode()
     assert eng.state_dir() == tmp_path / "data"
     assert eng.exports_dir() == tmp_path / "data" / "exports"
+
+
+def test_history_batch_read_write(tmp_path):
+    store = eng.HistoryStore(tmp_path / "batch.sqlite3")
+    store.record_many([
+        ("sorin", "taken", 0, "bulk"),
+        ("melix", "available", 91, "validator"),
+        ("badone", "inappropriate", 0, "validator"),
+    ])
+
+    cached = store.cached_status_many(["sorin", "melix", "badone", "missing"])
+    assert cached == {
+        "sorin": "taken",
+        "melix": "available",
+        "badone": "inappropriate",
+    }
+    assert store.summary()["total"] == 3
+    store.close()
