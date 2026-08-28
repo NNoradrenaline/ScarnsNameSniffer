@@ -44,6 +44,12 @@ jobs:
           python -m py_compile v25_engine.py
           python -m py_compile v25_fastnet.py
           python -m py_compile v25_entry.py
+          node --check browser-extension/background.js
+          node --check browser-extension/content.js
+          node --check browser-extension/email.js
+          node --check browser-extension/enter-submit.js
+          node --check browser-extension/popup.js
+          python -c "import json; json.load(open('browser-extension/manifest.json', encoding='utf-8'))"
 
       - name: Install dependencies
         shell: pwsh
