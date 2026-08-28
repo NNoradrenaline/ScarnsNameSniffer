@@ -76,6 +76,37 @@ Fetching CSRF token... OK
 
 ---
 
+## ⚡ Turbo scanning pipeline
+
+Name Sniffer v2.5 now uses a two-stage network pipeline designed to maximize useful throughput without evading Roblox limits:
+
+1. **Batch cache lookup** — up to 100 candidates are checked against the local SQLite history in one query.
+2. **Official bulk existence lookup** — uncached candidates are sent to Roblox's `users.roblox.com/v1/usernames/users` endpoint in batches of up to 100. Names returned by that endpoint are immediately classified as taken.
+3. **Survivor validation** — only names not resolved as existing users are sent through the signup username validator to distinguish available, inappropriate, reserved, or invalid names.
+4. **Batch database commit** — results are written to SQLite in groups instead of committing once per username.
+5. **AIMD validator concurrency** — individual validation starts aggressively, ramps after healthy waves, and cuts concurrency sharply after rate-limit responses.
+6. **Connection pooling** — the validator HTTP pool is expanded beyond the default Requests pool size.
+7. **Throttled terminal rendering** — the live dashboard refreshes at a bounded rate so console output does not become the scanner's bottleneck.
+
+For taken-heavy scans, this can dramatically increase **usernames classified per actual HTTP request**. The completion screen reports:
+
+```text
+Usernames classified
+Network usernames
+Actual HTTP requests
+Bulk lookup requests
+Resolved by bulk
+Individual validators
+Effective density (usernames / HTTP request)
+Average throughput (usernames / second)
+```
+
+The bulk lookup is only an existence prefilter. A name missing from the bulk response is **never assumed available**; it still goes through signup validation before being shown as available.
+
+Roblox `429 Too Many Requests` responses are respected. Name Sniffer uses cooldown/backoff behavior and does not use proxies, IP rotation, or other rate-limit-evasion techniques.
+
+---
+
 ## 🧠 Advanced Scanner Features
 
 The v2.5 scanner now includes a local search-engine layer around the existing Roblox availability checker:
