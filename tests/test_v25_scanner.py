@@ -246,19 +246,15 @@ def test_thousand_taken_names_collapse_to_ten_bulk_requests(monkeypatch):
     candidates = [f"name{i:04d}" for i in range(1000)]
     found = []
 
-    rows = []
-    for offset in range(0, len(candidates), scanner.TURBO_CANDIDATE_BATCH):
-        rows.extend(
-            scanner.check_candidates(
-                candidates[offset:offset + scanner.TURBO_CANDIDATE_BATCH],
-                store,
-                stats,
-                adaptive,
-                "benchmark",
-                target=len(candidates),
-                found=found,
-            )
-        )
+    rows = scanner.check_candidates(
+        candidates,
+        store,
+        stats,
+        adaptive,
+        "benchmark",
+        target=len(candidates),
+        found=found,
+    )
 
     assert len(rows) == 1000
     assert stats.checked == 1000
@@ -305,3 +301,31 @@ def test_cached_available_target_prevents_unneeded_bulk_request(monkeypatch):
     assert found == ["freeone"]
     assert stats.cache_hits == 1
     assert stats.http_requests == 0
+
+
+def test_structural_generator_never_starts_or_ends_with_underscore():
+    cfg = eng.FilterConfig(
+        allow_digits=True,
+        allow_underscores=True,
+        must_start_letter=True,
+    )
+    source = scanner.build_unique_generator(4, "ab1_", cfg)
+    names = [next(source) for _ in range(min(50, source.size))]
+    assert len(names) == len(set(names))
+    assert all(name[0].isalpha() for name in names)
+    assert all(not name.startswith("_") and not name.endswith("_") for name in names)
+
+
+def test_unique_source_generation_does_not_need_seen_set():
+    cfg = eng.FilterConfig()
+    source = eng.UniqueSpaceGenerator(["ab", "01"], multiplier=3, offset=0)
+    out = scanner.generate_unique(
+        4,
+        source.__next__,
+        cfg,
+        [],
+        seen=None,
+        source_unique=True,
+    )
+    assert len(out) == 4
+    assert len(set(out)) == 4
