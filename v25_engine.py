@@ -163,6 +163,16 @@ class HistoryStore:
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA temp_store=MEMORY")
         self.conn.execute("PRAGMA cache_size=-16000")
+        self.query_chunk_size = 800
+        try:
+            for row in self.conn.execute("PRAGMA compile_options"):
+                option = row[0]
+                if option.startswith("MAX_VARIABLE_NUMBER="):
+                    limit = int(option.split("=", 1)[1])
+                    self.query_chunk_size = max(800, min(5000, limit - 16))
+                    break
+        except Exception:
+            pass
         self._init_schema()
     def _init_schema(self):
         self.conn.executescript("""
@@ -192,8 +202,8 @@ class HistoryStore:
         if not names:return {}
         current=utc_now_ts() if now is None else float(now)
         result={}
-        for offset in range(0,len(names),800):
-            chunk=names[offset:offset+800]
+        for offset in range(0,len(names),self.query_chunk_size):
+            chunk=names[offset:offset+self.query_chunk_size]
             placeholders=",".join("?" for _ in chunk)
             rows=self.conn.execute(f"SELECT username,status,checked_at FROM checks WHERE username IN ({placeholders})",chunk).fetchall()
             for row in rows:
