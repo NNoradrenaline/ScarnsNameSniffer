@@ -9,6 +9,7 @@ on:
       - "v25_launcher.py"
       - "v25_scanner.py"
       - "v25_engine.py"
+      - "v25_fastnet.py"
       - "tests/**"
       - "portable.flag.example"
       - "v25_entry.py"
@@ -41,6 +42,7 @@ jobs:
           python -m py_compile v25_launcher.py
           python -m py_compile v25_scanner.py
           python -m py_compile v25_engine.py
+          python -m py_compile v25_fastnet.py
           python -m py_compile v25_entry.py
 
       - name: Install dependencies
