@@ -225,3 +225,45 @@ def test_target_scan_can_stop_after_survivor_wave(monkeypatch):
 
     assert len(calls) == 2
     assert len(found) >= 1
+
+
+def test_thousand_taken_names_collapse_to_ten_bulk_requests(monkeypatch):
+    def all_taken(names):
+        return bulk_result(names, existing=set(names))
+
+    monkeypatch.setattr(scanner.fastnet, "bulk_existing", all_taken)
+    monkeypatch.setattr(
+        scanner.base,
+        "smart_check",
+        lambda name: (_ for _ in ()).throw(
+            AssertionError("all names should be resolved by bulk lookup")
+        ),
+    )
+
+    store = FakeStore()
+    stats = eng.ScanStats(time.time())
+    adaptive = eng.AdaptiveWorkers(workers=20)
+    candidates = [f"name{i:04d}" for i in range(1000)]
+    found = []
+
+    rows = []
+    for offset in range(0, len(candidates), scanner.TURBO_CANDIDATE_BATCH):
+        rows.extend(
+            scanner.check_candidates(
+                candidates[offset:offset + scanner.TURBO_CANDIDATE_BATCH],
+                store,
+                stats,
+                adaptive,
+                "benchmark",
+                target=len(candidates),
+                found=found,
+            )
+        )
+
+    assert len(rows) == 1000
+    assert stats.checked == 1000
+    assert stats.bulk_resolved == 1000
+    assert stats.bulk_requests == 10
+    assert stats.http_requests == 10
+    assert stats.individual_validations == 0
+    assert stats.network_checks / stats.http_requests == 100
