@@ -148,6 +148,9 @@ def check_candidates(candidates, store, stats, adaptive, mode, target=None, foun
             f"{len(cached_map)} cache hits", "[batched cache]", force=True
         )
 
+    if stop_after_available is not None and len(found) >= stop_after_available:
+        return results
+
     if not uncached:
         return results
 
