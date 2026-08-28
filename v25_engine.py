@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Feature engine for Scarn's Name Sniffer v2.5."""
 from __future__ import annotations
-import csv, json, os, re, sqlite3, sys, time
+import csv, json, math, os, re, secrets, sqlite3, sys, time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +43,71 @@ def ensure_support_files():
     if not p.exists(): p.write_text("# One substring or regular expression per line.\n# Blank lines and lines beginning with # are ignored.\n",encoding="utf-8")
     p2=presets_path()
     if not p2.exists(): p2.write_text(json.dumps(BUILTIN_PRESETS,indent=2),encoding="utf-8")
+
+
+class UniqueSpaceGenerator:
+    """Random-looking permutation of a finite username space.
+
+    Every value is produced at most once without needing a growing duplicate
+    set. Position-specific alphabets let the scanner enforce cheap structural
+    rules such as "must start with a letter" before network work begins.
+    """
+
+    def __init__(self, alphabets, multiplier=None, offset=None, index=0):
+        self.alphabets = [tuple(dict.fromkeys(chars)) for chars in alphabets]
+        if not self.alphabets or any(not chars for chars in self.alphabets):
+            raise ValueError("every position needs at least one character")
+        self.radices = [len(chars) for chars in self.alphabets]
+        self.size = math.prod(self.radices)
+        self.index = int(index)
+
+        if multiplier is None:
+            if self.size <= 1:
+                multiplier = 1
+            else:
+                while True:
+                    candidate = secrets.randbelow(self.size - 1) + 1
+                    if math.gcd(candidate, self.size) == 1:
+                        multiplier = candidate
+                        break
+        if math.gcd(int(multiplier), self.size) != 1:
+            raise ValueError("multiplier must be coprime with username-space size")
+
+        self.multiplier = int(multiplier)
+        self.offset = secrets.randbelow(self.size) if offset is None else int(offset) % self.size
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.index >= self.size:
+            raise StopIteration
+        value = (self.multiplier * self.index + self.offset) % self.size
+        self.index += 1
+
+        chars = [""] * len(self.alphabets)
+        for pos in range(len(self.alphabets) - 1, -1, -1):
+            radix = self.radices[pos]
+            value, digit = divmod(value, radix)
+            chars[pos] = self.alphabets[pos][digit]
+        return "".join(chars)
+
+    def snapshot(self):
+        return {
+            "alphabets": ["".join(chars) for chars in self.alphabets],
+            "multiplier": self.multiplier,
+            "offset": self.offset,
+            "index": self.index,
+        }
+
+    @classmethod
+    def from_snapshot(cls, payload):
+        return cls(
+            payload["alphabets"],
+            multiplier=payload["multiplier"],
+            offset=payload["offset"],
+            index=payload.get("index", 0),
+        )
 
 @dataclass
 class FilterConfig:
