@@ -244,7 +244,13 @@ def get_csrf_token():
     return None
 def ensure_token():
     global CSRF_TOKEN
-    with TOKEN_LOCK: return CSRF_TOKEN if CSRF_TOKEN else get_csrf_token()
+    # Fast path: once initialized, concurrent validators avoid the lock.
+    if CSRF_TOKEN:
+        return CSRF_TOKEN
+    with TOKEN_LOCK:
+        if CSRF_TOKEN:
+            return CSRF_TOKEN
+        return get_csrf_token()
 def refresh_token():
     with TOKEN_LOCK: return get_csrf_token()
 def check_username(name):
