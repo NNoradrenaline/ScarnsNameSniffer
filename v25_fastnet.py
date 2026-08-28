@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -12,6 +13,8 @@ from requests.adapters import HTTPAdapter
 BULK_URL = "https://users.roblox.com/v1/usernames/users"
 BULK_BATCH_SIZE = 100
 POOL_SIZE = 64
+BULK_INITIAL_CONCURRENCY = 4
+BULK_MAX_CONCURRENCY = 8
 
 _session = requests.Session()
 _adapter = HTTPAdapter(
@@ -145,6 +148,86 @@ def bulk_existing(usernames, timeout=(3.05, 8.0)):
             error=f"decode_error({exc})",
         )
 
+
+
+class BulkConcurrencyController:
+    """AIMD controller for official bulk lookups.
+
+    It increases concurrency after healthy rounds and halves it on 429.
+    Rate-limit headers are used to avoid launching another full round when
+    the server reports that the current quota is exhausted.
+    """
+
+    def __init__(self, workers=BULK_INITIAL_CONCURRENCY, minimum=1, maximum=BULK_MAX_CONCURRENCY):
+        self.minimum = minimum
+        self.maximum = maximum
+        self.workers = max(minimum, min(maximum, int(workers)))
+        self.healthy_streak = 0
+
+    def observe(self, results):
+        results = list(results)
+        if not results:
+            return self.workers
+
+        if any(r.status_code == 429 for r in results):
+            self.workers = max(self.minimum, max(1, self.workers // 2))
+            self.healthy_streak = 0
+            return self.workers
+
+        if any(not r.ok for r in results):
+            self.workers = max(self.minimum, self.workers - 1)
+            self.healthy_streak = 0
+            return self.workers
+
+        self.healthy_streak += 1
+        if self.healthy_streak >= 2:
+            self.workers = min(self.maximum, self.workers + 1)
+            self.healthy_streak = 0
+        return self.workers
+
+    @staticmethod
+    def cooldown_seconds(results):
+        waits = []
+        for result in results:
+            if result.status_code == 429:
+                if result.retry_after is not None:
+                    waits.append(float(result.retry_after))
+                elif result.rate_reset is not None:
+                    waits.append(float(result.rate_reset))
+            elif result.rate_remaining == 0 and result.rate_reset is not None:
+                waits.append(float(result.rate_reset))
+        if not waits:
+            return 0.0
+        return min(60.0, max(0.0, max(waits)))
+
+
+def bulk_existing_many(usernames, controller=None):
+    """Run several <=100-name official bulk requests concurrently.
+
+    The controller is deliberately small and reacts to Roblox rate-limit
+    responses. This improves wall-clock latency without proxying or evading
+    service limits.
+    """
+    controller = controller or BulkConcurrencyController()
+    batches = list(chunks(usernames))
+    if not batches:
+        return [], controller
+
+    results = []
+    for offset in range(0, len(batches), controller.workers):
+        round_batches = batches[offset:offset + controller.workers]
+        with ThreadPoolExecutor(max_workers=min(controller.workers, len(round_batches))) as executor:
+            futures = [executor.submit(bulk_existing, batch) for batch in round_batches]
+            round_results = [future.result() for future in as_completed(futures)]
+
+        results.extend(round_results)
+        controller.observe(round_results)
+
+        cooldown = controller.cooldown_seconds(round_results)
+        if cooldown > 0:
+            time.sleep(cooldown)
+
+    return results, controller
 
 def tune_requests_session(session, pool_size=POOL_SIZE):
     """Increase requests/urllib3 connection pools for concurrent validators."""
