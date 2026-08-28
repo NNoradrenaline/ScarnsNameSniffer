@@ -23,8 +23,11 @@ accounts.APP_VER = APP_VER
 
 _recent_available = deque(maxlen=6)
 _last_dashboard_at = 0.0
-DASHBOARD_INTERVAL = 0.08
+DASHBOARD_INTERVAL = 0.25
 TURBO_CANDIDATE_BATCH = fastnet.BULK_BATCH_SIZE
+TURBO_WINDOW_SIZE = 1000
+CHECKPOINT_INTERVAL = 2.0
+CHECKPOINT_EVERY = 5000
 
 # The legacy validator uses requests.Session. Its default pool is only 10,
 # which becomes a hidden bottleneck once adaptive concurrency climbs higher.
@@ -60,6 +63,35 @@ def charset_for(mode, filters):
         chars = chars.replace("_", "")
     return chars or base.LETTERS
 
+
+
+def build_unique_generator(length, chars, filters, resume_state=None):
+    """Build a duplicate-free normal-scan generator.
+
+    Cheap structural constraints are encoded directly into per-position
+    alphabets so invalid shapes never enter the scan pipeline.
+    """
+    if resume_state:
+        return eng.UniqueSpaceGenerator.from_snapshot(resume_state)
+
+    first = chars
+    if filters.must_start_letter:
+        first = "".join(c for c in chars if c.isalpha()) or base.LETTERS
+
+    middle = chars
+    last = chars
+
+    # Roblox usernames cannot use a leading/trailing underscore in normal
+    # signup validation, so avoid generating those shapes entirely.
+    first = first.replace("_", "")
+    last = last.replace("_", "")
+
+    alphabets = [first]
+    if length > 2:
+        alphabets.extend([middle] * (length - 2))
+    if length > 1:
+        alphabets.append(last)
+    return eng.UniqueSpaceGenerator(alphabets)
 
 def configure_filters(seed=None):
     cfg = eng.FilterConfig.from_dict(seed)
@@ -111,7 +143,10 @@ def generate_unique(count, generator, filters, banned, seen):
     max_attempts = max(200, count * 80)
     while len(out) < count and attempts < max_attempts:
         attempts += 1
-        name = generator().lower()
+        try:
+            name = generator().lower()
+        except StopIteration:
+            break
         if name in seen:
             continue
         seen.add(name)
@@ -120,15 +155,26 @@ def generate_unique(count, generator, filters, banned, seen):
     return out
 
 
-def check_candidates(candidates, store, stats, adaptive, mode, target=None, found=None, stop_after_available=None):
-    """Turbo pipeline: cache -> bulk existence -> individual validation survivors."""
+def check_candidates(
+    candidates,
+    store,
+    stats,
+    adaptive,
+    mode,
+    target=None,
+    found=None,
+    stop_after_available=None,
+    bulk_controller=None,
+    collect_rows=True,
+):
+    """Fast path: one cache query -> concurrent bulk lookups -> survivor validators."""
     results = []
     found = found if found is not None else []
+    bulk_controller = bulk_controller or fastnet.BulkConcurrencyController()
     candidates = list(dict.fromkeys(name.lower() for name in candidates))
     if not candidates:
         return results
 
-    # One SQLite query for the whole candidate batch.
     cached_map = store.cached_status_many(candidates)
     uncached = []
     for name in candidates:
@@ -136,35 +182,50 @@ def check_candidates(candidates, store, stats, adaptive, mode, target=None, foun
         if cached is None:
             uncached.append(name)
             continue
+
         stats.record(cached, cached=True)
-        results.append(eng.result_row(name, cached))
+        if collect_rows:
+            score = eng.score_username(name) if cached == "available" else 0
+            results.append(
+                {
+                    "username": name,
+                    "status": cached,
+                    "score": score,
+                    "length": len(name),
+                    "checked_at": eng.utc_iso(),
+                }
+            )
         if cached == "available" and name not in found:
             found.append(name)
             print_available_live(name)
 
     if cached_map:
         dashboard(
-            stats, adaptive, target or len(candidates), found, mode,
-            f"{len(cached_map)} cache hits", "[batched cache]", force=True
+            stats,
+            adaptive,
+            target or len(candidates),
+            found,
+            mode,
+            f"{len(cached_map)} cache hits",
+            "[one DB query]",
+            force=True,
         )
 
     if stop_after_available is not None and len(found) >= stop_after_available:
         return results
-
     if not uncached:
         return results
 
-    # First network stage: up to 100 usernames per official users lookup.
-    # Returned usernames are definitely already assigned. Missing usernames
-    # are *not* assumed available; they move to signup validation below.
+    # Resolve taken usernames in multiple official <=100-name requests at once.
+    bulk_results, _ = fastnet.bulk_existing_many(uncached, bulk_controller)
     survivors = []
     pending_records = []
     bulk_status_signals = []
 
-    for chunk in fastnet.chunks(uncached):
-        lookup = fastnet.bulk_existing(chunk)
+    for lookup in bulk_results:
         stats.http_requests += 1
         stats.bulk_requests += 1
+        chunk = lookup.requested
 
         if lookup.ok:
             existing = lookup.existing
@@ -172,37 +233,48 @@ def check_candidates(candidates, store, stats, adaptive, mode, target=None, foun
                 if name in existing:
                     stats.record("taken", cached=False)
                     stats.bulk_resolved += 1
-                    row = eng.result_row(name, "taken")
-                    results.append(row)
-                    pending_records.append((name, "taken", row["score"], mode))
+                    pending_records.append((name, "taken", 0, mode))
+                    if collect_rows:
+                        results.append(
+                            {
+                                "username": name,
+                                "status": "taken",
+                                "score": 0,
+                                "length": len(name),
+                                "checked_at": eng.utc_iso(),
+                            }
+                        )
                 else:
                     survivors.append(name)
 
             dashboard(
-                stats, adaptive, target or len(candidates), found, mode,
-                f"bulk {len(chunk)} -> {len(existing)} taken, {len(chunk)-len(existing)} survivors",
+                stats,
+                adaptive,
+                target or len(candidates),
+                found,
+                mode,
+                f"bulk {len(chunk)} -> {len(existing)} taken / {len(chunk)-len(existing)} survivors",
+                f"[bulk x{bulk_controller.workers}]",
                 force=True,
             )
         else:
-            # Preserve correctness when the bulk service is unavailable.
-            # 429 handling honors Roblox's retry guidance rather than evading it.
+            # Correctness first: unresolved bulk failures fall through to the
+            # authoritative signup validator. 429 handling/backoff happens in
+            # v25_fastnet before another bulk round is launched.
             survivors.extend(chunk)
-            if lookup.status_code == 429:
-                bulk_status_signals.append("ratelimited")
-                wait = lookup.retry_after if lookup.retry_after is not None else lookup.rate_reset
-                wait = min(30.0, max(1.0, float(wait or 2.0)))
-                print(f"\n  Bulk lookup rate-limited. Respecting cooldown for {wait:.1f}s.")
-                time.sleep(wait)
-            else:
-                bulk_status_signals.append(lookup.error or "bulk_error")
+            bulk_status_signals.append(
+                "ratelimited" if lookup.status_code == 429 else (lookup.error or "bulk_error")
+            )
 
     if pending_records:
         store.record_many(pending_records)
 
-    # Second stage: only unresolved names need the expensive signup validator.
-    # Work in adaptive waves so a target scan can stop once it has enough names.
+    if stop_after_available is not None and len(found) >= stop_after_available:
+        return results
+
+    # Validate only bulk survivors. Score calculation is deferred until a name
+    # is actually available; taken/inappropriate names do not waste CPU on it.
     validation_records = []
-    validation_statuses = []
     offset = 0
 
     while offset < len(survivors):
@@ -216,6 +288,7 @@ def check_candidates(candidates, store, stats, adaptive, mode, target=None, foun
         with base.ThreadPoolExecutor(max_workers=adaptive.workers) as executor:
             futures = {executor.submit(base.smart_check, name): name for name in wave}
             wave_statuses = []
+
             for future in base.as_completed(futures):
                 name = futures[future]
                 try:
@@ -227,18 +300,32 @@ def check_candidates(candidates, store, stats, adaptive, mode, target=None, foun
                 stats.individual_validations += 1
                 stats.record(status, cached=False)
                 wave_statuses.append(status)
-                validation_statuses.append(status)
 
-                row = eng.result_row(name, status)
-                results.append(row)
-                validation_records.append((name, status, row["score"], mode))
+                score = eng.score_username(name) if status == "available" else 0
+                validation_records.append((name, status, score, mode))
+
+                if collect_rows:
+                    results.append(
+                        {
+                            "username": name,
+                            "status": status,
+                            "score": score,
+                            "length": len(name),
+                            "checked_at": eng.utc_iso(),
+                        }
+                    )
 
                 if status == "available" and name not in found:
                     found.append(name)
                     print_available_live(name)
 
                 dashboard(
-                    stats, adaptive, target or len(candidates), found, mode, name
+                    stats,
+                    adaptive,
+                    target or len(candidates),
+                    found,
+                    mode,
+                    name,
                 )
 
         before = adaptive.workers
@@ -247,18 +334,34 @@ def check_candidates(candidates, store, stats, adaptive, mode, target=None, foun
             print("\n  Signup validator rate-limited. Cooling down before continuing.")
             time.sleep(2.0)
         elif adaptive.workers < before:
-            time.sleep(0.25)
+            time.sleep(0.15)
 
     if validation_records:
         store.record_many(validation_records)
 
     dashboard(
-        stats, adaptive, target or len(candidates), found, mode,
-        f"batch complete: {len(candidates)} candidates", force=True
+        stats,
+        adaptive,
+        target or len(candidates),
+        found,
+        mode,
+        f"window complete: {len(candidates)} candidates",
+        force=True,
     )
     return results
 
-def checkpoint_payload(mode, length, target, max_checks, found, stats, filters, charset_mode, aesthetic):
+def checkpoint_payload(
+    mode,
+    length,
+    target,
+    max_checks,
+    found,
+    stats,
+    filters,
+    charset_mode,
+    aesthetic,
+    generator_state=None,
+):
     return {
         "mode": mode,
         "length": length,
@@ -280,13 +383,16 @@ def checkpoint_payload(mode, length, target, max_checks, found, stats, filters, 
         "filters": vars(filters),
         "charset_mode": charset_mode,
         "aesthetic": bool(aesthetic),
+        "generator_state": generator_state,
     }
 
 def run_target_scan(length, target, max_checks, filters, charset_mode="m", aesthetic=False, resume=None, label="scan"):
     store = eng.HistoryStore()
     banned = eng.load_banned_patterns()
     adaptive = eng.AdaptiveWorkers()
+    bulk_controller = fastnet.BulkConcurrencyController()
     resume = resume or {}
+
     stats = eng.ScanStats(time.time() - float(resume.get("elapsed", 0)))
     found = list(resume.get("found", []))
     stats.checked = int(resume.get("checked", 0))
@@ -300,33 +406,71 @@ def run_target_scan(length, target, max_checks, filters, charset_mode="m", aesth
     stats.bulk_requests = int(resume.get("bulk_requests", 0))
     stats.bulk_resolved = int(resume.get("bulk_resolved", 0))
     stats.individual_validations = int(resume.get("individual_validations", 0))
+
     seen = set(found)
-    rows = []
-
     chars = charset_for(charset_mode, filters)
-    generator = (lambda: base.generate_aesthetic(length)) if aesthetic else (lambda: base.generate_random(length, chars))
 
-    print(f"\nStarting TURBO {label}. Cache: {eng.db_path()}")
+    if aesthetic:
+        source = None
+        generator = lambda: base.generate_aesthetic(length)
+    else:
+        source = build_unique_generator(
+            length,
+            chars,
+            filters,
+            resume_state=resume.get("generator_state"),
+        )
+        generator = source.__next__
+
+    print(f"\nStarting MAX-SPEED {label}. Cache: {eng.db_path()}")
     print(
-        f"Pipeline: {TURBO_CANDIDATE_BATCH}-name candidate batches -> bulk existence lookup -> "
-        "individual validation only for unresolved survivors."
+        f"Window: up to {TURBO_WINDOW_SIZE} candidates | bulk request: {TURBO_CANDIDATE_BATCH} names | "
+        f"bulk concurrency: {bulk_controller.workers}->{bulk_controller.maximum}"
     )
     print(
-        f"Validator workers adapt between {eng.MIN_WORKERS} and {eng.MAX_WORKERS}; "
-        "Roblox 429 responses cause backoff.\n"
+        f"Survivor validators: {adaptive.workers}->{adaptive.maximum} workers | "
+        "429 responses reduce concurrency and trigger cooldowns.\n"
     )
+
+    last_checkpoint_at = time.monotonic()
+    last_checkpoint_checked = stats.checked
+
+    def checkpoint(force=False):
+        nonlocal last_checkpoint_at, last_checkpoint_checked
+        now = time.monotonic()
+        if not force:
+            if (
+                now - last_checkpoint_at < CHECKPOINT_INTERVAL
+                and stats.checked - last_checkpoint_checked < CHECKPOINT_EVERY
+            ):
+                return
+        generator_state = source.snapshot() if source is not None else None
+        eng.save_checkpoint(
+            checkpoint_payload(
+                label,
+                length,
+                target,
+                max_checks,
+                found,
+                stats,
+                filters,
+                charset_mode,
+                aesthetic,
+                generator_state,
+            )
+        )
+        last_checkpoint_at = now
+        last_checkpoint_checked = stats.checked
 
     try:
         while len(found) < target and stats.checked < max_checks:
-            # The bulk endpoint is where the speed comes from. Decouple candidate
-            # batch size from individual-validator concurrency.
-            batch_size = min(TURBO_CANDIDATE_BATCH, max_checks - stats.checked)
+            batch_size = min(TURBO_WINDOW_SIZE, max_checks - stats.checked)
             candidates = generate_unique(batch_size, generator, filters, banned, seen)
             if not candidates:
-                print("\nNo more candidates passed the current filters.")
+                print("\nUsername space exhausted or no more candidates passed the filters.")
                 break
 
-            batch_rows = check_candidates(
+            check_candidates(
                 candidates,
                 store,
                 stats,
@@ -335,28 +479,20 @@ def run_target_scan(length, target, max_checks, filters, charset_mode="m", aesth
                 target,
                 found,
                 stop_after_available=target,
+                bulk_controller=bulk_controller,
+                collect_rows=False,
             )
-            rows.extend(batch_rows)
-            eng.save_checkpoint(
-                checkpoint_payload(
-                    label, length, target, max_checks, found, stats,
-                    filters, charset_mode, aesthetic
-                )
-            )
+            checkpoint(False)
+
     except KeyboardInterrupt:
         print("\n\nScan interrupted. Resume checkpoint saved.")
-        eng.save_checkpoint(
-            checkpoint_payload(
-                label, length, target, max_checks, found, stats,
-                filters, charset_mode, aesthetic
-            )
-        )
+        checkpoint(True)
         store.close()
         return
 
     eng.clear_checkpoint()
     store.close()
-    finish_scan(rows, found, stats, label)
+    finish_scan([], found, stats, label)
 
 def finish_scan(rows, found, stats, label):
     print("\n\n" + "=" * 78)
@@ -450,20 +586,27 @@ def generate_mode():
     filters = configure_filters({"must_contain_vowel": aesthetic})
     charset_mode = choose_charset_mode()
     chars = charset_for(charset_mode, filters)
-    generator = (lambda: base.generate_aesthetic(length)) if aesthetic else (lambda: base.generate_random(length, chars))
+    if aesthetic:
+        generator = lambda: base.generate_aesthetic(length)
+    else:
+        generator = build_unique_generator(length, chars, filters).__next__
     banned = eng.load_banned_patterns()
     names = generate_unique(count, generator, filters, banned, set())
     store = eng.HistoryStore()
     stats = eng.ScanStats(time.time())
     adaptive = eng.AdaptiveWorkers()
-    found, rows = [], []
+    bulk_controller = fastnet.BulkConcurrencyController()
+    found = []
     offset = 0
     while offset < len(names):
-        size = TURBO_CANDIDATE_BATCH
-        rows.extend(check_candidates(names[offset:offset+size], store, stats, adaptive, "generate", len(names), found))
+        size = TURBO_WINDOW_SIZE
+        check_candidates(
+            names[offset:offset+size], store, stats, adaptive, "generate",
+            len(names), found, bulk_controller=bulk_controller, collect_rows=False
+        )
         offset += size
     store.close()
-    finish_scan(rows, found, stats, "generate")
+    finish_scan([], found, stats, "generate")
 
 
 def manual_mode():
@@ -505,14 +648,18 @@ def wordlist_mode():
     store = eng.HistoryStore()
     stats = eng.ScanStats(time.time())
     adaptive = eng.AdaptiveWorkers()
-    found, rows = [], []
+    bulk_controller = fastnet.BulkConcurrencyController()
+    found = []
     offset = 0
     while offset < len(candidates):
-        size = TURBO_CANDIDATE_BATCH
-        rows.extend(check_candidates(candidates[offset:offset+size], store, stats, adaptive, "wordlist", len(candidates), found))
+        size = TURBO_WINDOW_SIZE
+        check_candidates(
+            candidates[offset:offset+size], store, stats, adaptive, "wordlist",
+            len(candidates), found, bulk_controller=bulk_controller, collect_rows=False
+        )
         offset += size
     store.close()
-    finish_scan(rows, found, stats, "wordlist")
+    finish_scan([], found, stats, "wordlist")
 
 
 def mutation_mode():
@@ -529,14 +676,18 @@ def mutation_mode():
     store = eng.HistoryStore()
     stats = eng.ScanStats(time.time())
     adaptive = eng.AdaptiveWorkers()
-    found, rows = [], []
+    bulk_controller = fastnet.BulkConcurrencyController()
+    found = []
     offset = 0
     while offset < len(candidates):
-        size = TURBO_CANDIDATE_BATCH
-        rows.extend(check_candidates(candidates[offset:offset+size], store, stats, adaptive, "mutation", len(candidates), found))
+        size = TURBO_WINDOW_SIZE
+        check_candidates(
+            candidates[offset:offset+size], store, stats, adaptive, "mutation",
+            len(candidates), found, bulk_controller=bulk_controller, collect_rows=False
+        )
         offset += size
     store.close()
-    finish_scan(rows, found, stats, "mutation")
+    finish_scan([], found, stats, "mutation")
 
 
 def watchlist_mode():
@@ -705,9 +856,7 @@ def run_main():
     print(f"{base.APP_NAME} v{APP_VER}".center(74))
     print("(Roblox username search engine + availability checker)".center(74))
     print_paths()
-    print("\nFetching CSRF token...", end=" ")
-    token = base.get_csrf_token()
-    print("OK" if token else "FAILED (scanner will report request errors)")
+    print("\nCSRF token: lazy-loaded only if a bulk survivor needs signup validation.")
     check_for_update(silent=True)
     if eng.load_checkpoint():
         print("\nUnfinished scan found. Choose [r] to resume it.")
