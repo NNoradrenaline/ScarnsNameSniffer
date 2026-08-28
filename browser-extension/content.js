@@ -183,16 +183,17 @@
 
     if (password) {
       await new Promise(resolve => {
-        chrome.storage.session.set(
+        chrome.runtime.sendMessage(
           {
-            pendingSignupSecret: {
+            type: "scarn:storePendingSecret",
+            secret: {
               username,
               password,
               armedAt: now,
               expiresAt: pending.expiresAt
             }
           },
-          resolve
+          () => resolve()
         );
       });
     }
