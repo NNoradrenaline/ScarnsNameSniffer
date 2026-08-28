@@ -267,3 +267,41 @@ def test_thousand_taken_names_collapse_to_ten_bulk_requests(monkeypatch):
     assert stats.http_requests == 10
     assert stats.individual_validations == 0
     assert stats.network_checks / stats.http_requests == 100
+
+
+def test_cached_available_target_prevents_unneeded_bulk_request(monkeypatch):
+    monkeypatch.setattr(
+        scanner.fastnet,
+        "bulk_existing",
+        lambda names: (_ for _ in ()).throw(
+            AssertionError(f"bulk request should have been skipped: {names}")
+        ),
+    )
+    monkeypatch.setattr(
+        scanner.base,
+        "smart_check",
+        lambda name: (_ for _ in ()).throw(
+            AssertionError(f"validator should have been skipped: {name}")
+        ),
+    )
+
+    store = FakeStore({"freeone": "available"})
+    stats = eng.ScanStats(time.time())
+    adaptive = eng.AdaptiveWorkers(workers=16)
+    found = []
+
+    rows = scanner.check_candidates(
+        ["freeone", "uncachedone"],
+        store,
+        stats,
+        adaptive,
+        "target",
+        target=1,
+        found=found,
+        stop_after_available=1,
+    )
+
+    assert [row["username"] for row in rows] == ["freeone"]
+    assert found == ["freeone"]
+    assert stats.cache_hits == 1
+    assert stats.http_requests == 0
