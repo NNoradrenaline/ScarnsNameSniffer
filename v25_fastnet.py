@@ -208,14 +208,17 @@ class BulkScheduler:
         self.controller = controller or BulkConcurrencyController()
         self.executor = ThreadPoolExecutor(max_workers=self.controller.maximum)
         self.closed = False
+        self.submitted_requests = 0
 
-    def lookup_many(self, usernames):
+    def iter_lookup_many(self, usernames):
+        """Yield bulk results as soon as each request completes.
+
+        This lets the scanner validate survivors from the first completed
+        batch while sibling bulk requests are still in flight.
+        """
         batches = list(chunks(usernames))
-        if not batches:
-            return []
-
-        results = []
         offset = 0
+
         while offset < len(batches):
             round_size = self.controller.workers
             round_batches = batches[offset:offset + round_size]
@@ -225,19 +228,28 @@ class BulkScheduler:
                 self.executor.submit(bulk_existing, batch)
                 for batch in round_batches
             ]
-            round_results = [
-                future.result()
-                for future in as_completed(futures)
-            ]
+            self.submitted_requests += len(futures)
+            round_results = []
 
-            results.extend(round_results)
+            try:
+                for future in as_completed(futures):
+                    result = future.result()
+                    round_results.append(result)
+                    yield result
+            finally:
+                # If the caller reached its target and closes this generator,
+                # avoid starting any queued work that has not begun yet.
+                for future in futures:
+                    if not future.done():
+                        future.cancel()
+
             self.controller.observe(round_results)
-
             cooldown = self.controller.cooldown_seconds(round_results)
             if cooldown > 0:
                 time.sleep(cooldown)
 
-        return results
+    def lookup_many(self, usernames):
+        return list(self.iter_lookup_many(usernames))
 
     def close(self):
         if not self.closed:
