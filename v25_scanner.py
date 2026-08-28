@@ -14,6 +14,7 @@ import requests
 
 import roblox_name_gen as base
 import v25_engine as eng
+import v25_fastnet as fastnet
 import v25_launcher as accounts
 
 APP_VER = "2.5"
@@ -21,6 +22,13 @@ base.APP_VER = APP_VER
 accounts.APP_VER = APP_VER
 
 _recent_available = deque(maxlen=6)
+_last_dashboard_at = 0.0
+DASHBOARD_INTERVAL = 0.08
+TURBO_CANDIDATE_BATCH = fastnet.BULK_BATCH_SIZE
+
+# The legacy validator uses requests.Session. Its default pool is only 10,
+# which becomes a hidden bottleneck once adaptive concurrency climbs higher.
+fastnet.tune_requests_session(base.SESH)
 
 
 def yesno(prompt, default=False):
@@ -70,21 +78,25 @@ def configure_filters(seed=None):
     return cfg
 
 
-def dashboard(stats, adaptive, target, found, mode, current="", cache_note=""):
+def dashboard(stats, adaptive, target, found, mode, current="", cache_note="", force=False):
+    global _last_dashboard_at
+    now = time.perf_counter()
+    if not force and now - _last_dashboard_at < DASHBOARD_INTERVAL:
+        return
+    _last_dashboard_at = now
     elapsed = eng.format_duration(stats.elapsed)
-    print("\r" + " " * 155 + "\r", end="")
     line = (
         f"[{mode}] checked:{stats.checked}  available:{stats.available}  taken:{stats.taken}  "
         f"inappropriate:{stats.inappropriate}  other:{stats.other}  cache:{stats.cache_hits}  "
+        f"http:{stats.http_requests}  bulk:{stats.bulk_requests}  validators:{stats.individual_validations}  "
         f"workers:{adaptive.workers}  speed:{stats.speed:.1f}/s  time:{elapsed}  target:{len(found)}/{target}"
     )
     if current:
         line += f"  | {current}"
     if cache_note:
         line += f" {cache_note}"
-    sys.stdout.write(line[:154])
+    sys.stdout.write("\r" + " " * 175 + "\r" + line[:174])
     sys.stdout.flush()
-
 
 def print_available_live(name):
     _recent_available.appendleft(name)
@@ -108,57 +120,140 @@ def generate_unique(count, generator, filters, banned, seen):
     return out
 
 
-def check_candidates(candidates, store, stats, adaptive, mode, target=None, found=None):
-    """Check a finite candidate list using valid cache entries before network."""
+def check_candidates(candidates, store, stats, adaptive, mode, target=None, found=None, stop_after_available=None):
+    """Turbo pipeline: cache -> bulk existence -> individual validation survivors."""
     results = []
     found = found if found is not None else []
-    uncached = []
+    candidates = list(dict.fromkeys(name.lower() for name in candidates))
+    if not candidates:
+        return results
 
+    # One SQLite query for the whole candidate batch.
+    cached_map = store.cached_status_many(candidates)
+    uncached = []
     for name in candidates:
-        cached = store.cached_status(name)
-        if cached is not None:
-            stats.record(cached, cached=True)
-            row = eng.result_row(name, cached)
-            results.append(row)
-            if cached == "available" and name not in found:
-                found.append(name)
-                print_available_live(name)
-            dashboard(stats, adaptive, target or len(candidates), found, mode, name, "[cached]")
-        else:
+        cached = cached_map.get(name)
+        if cached is None:
             uncached.append(name)
+            continue
+        stats.record(cached, cached=True)
+        results.append(eng.result_row(name, cached))
+        if cached == "available" and name not in found:
+            found.append(name)
+            print_available_live(name)
+
+    if cached_map:
+        dashboard(
+            stats, adaptive, target or len(candidates), found, mode,
+            f"{len(cached_map)} cache hits", "[batched cache]", force=True
+        )
 
     if not uncached:
         return results
 
-    with base.ThreadPoolExecutor(max_workers=adaptive.workers) as executor:
-        futures = {executor.submit(base.smart_check, name): name for name in uncached}
-        statuses = []
-        for future in base.as_completed(futures):
-            name = futures[future]
-            try:
-                _, status = future.result()
-            except Exception as exc:
-                status = f"error({exc})"
-            statuses.append(status)
-            score = eng.score_username(name)
-            store.record(name, status, score, mode)
-            stats.record(status, cached=False)
-            row = eng.result_row(name, status)
-            results.append(row)
-            if status == "available" and name not in found:
-                found.append(name)
-                print_available_live(name)
-            dashboard(stats, adaptive, target or len(candidates), found, mode, name)
+    # First network stage: up to 100 usernames per official users lookup.
+    # Returned usernames are definitely already assigned. Missing usernames
+    # are *not* assumed available; they move to signup validation below.
+    survivors = []
+    pending_records = []
+    bulk_status_signals = []
 
-    before = adaptive.workers
-    adaptive.observe(statuses)
-    if "ratelimited" in statuses:
-        sys.stdout.write("\n  Roblox rate limiting detected. Backing off and cooling down.\n")
-        time.sleep(2.0)
-    elif adaptive.workers < before:
-        time.sleep(0.5)
+    for chunk in fastnet.chunks(uncached):
+        lookup = fastnet.bulk_existing(chunk)
+        stats.http_requests += 1
+        stats.bulk_requests += 1
+
+        if lookup.ok:
+            existing = lookup.existing
+            for name in chunk:
+                if name in existing:
+                    stats.record("taken", cached=False)
+                    stats.bulk_resolved += 1
+                    row = eng.result_row(name, "taken")
+                    results.append(row)
+                    pending_records.append((name, "taken", row["score"], mode))
+                else:
+                    survivors.append(name)
+
+            dashboard(
+                stats, adaptive, target or len(candidates), found, mode,
+                f"bulk {len(chunk)} -> {len(existing)} taken, {len(chunk)-len(existing)} survivors",
+                force=True,
+            )
+        else:
+            # Preserve correctness when the bulk service is unavailable.
+            # 429 handling honors Roblox's retry guidance rather than evading it.
+            survivors.extend(chunk)
+            if lookup.status_code == 429:
+                bulk_status_signals.append("ratelimited")
+                wait = lookup.retry_after if lookup.retry_after is not None else lookup.rate_reset
+                wait = min(30.0, max(1.0, float(wait or 2.0)))
+                print(f"\n  Bulk lookup rate-limited. Respecting cooldown for {wait:.1f}s.")
+                time.sleep(wait)
+            else:
+                bulk_status_signals.append(lookup.error or "bulk_error")
+
+    if pending_records:
+        store.record_many(pending_records)
+
+    # Second stage: only unresolved names need the expensive signup validator.
+    # Work in adaptive waves so a target scan can stop once it has enough names.
+    validation_records = []
+    validation_statuses = []
+    offset = 0
+
+    while offset < len(survivors):
+        if stop_after_available is not None and len(found) >= stop_after_available:
+            break
+
+        wave_size = min(adaptive.workers, len(survivors) - offset)
+        wave = survivors[offset:offset + wave_size]
+        offset += wave_size
+
+        with base.ThreadPoolExecutor(max_workers=adaptive.workers) as executor:
+            futures = {executor.submit(base.smart_check, name): name for name in wave}
+            wave_statuses = []
+            for future in base.as_completed(futures):
+                name = futures[future]
+                try:
+                    _, status = future.result()
+                except Exception as exc:
+                    status = f"error({exc})"
+
+                stats.http_requests += 1
+                stats.individual_validations += 1
+                stats.record(status, cached=False)
+                wave_statuses.append(status)
+                validation_statuses.append(status)
+
+                row = eng.result_row(name, status)
+                results.append(row)
+                validation_records.append((name, status, row["score"], mode))
+
+                if status == "available" and name not in found:
+                    found.append(name)
+                    print_available_live(name)
+
+                dashboard(
+                    stats, adaptive, target or len(candidates), found, mode, name
+                )
+
+        before = adaptive.workers
+        adaptive.observe(wave_statuses + bulk_status_signals)
+        if "ratelimited" in wave_statuses:
+            print("\n  Signup validator rate-limited. Cooling down before continuing.")
+            time.sleep(2.0)
+        elif adaptive.workers < before:
+            time.sleep(0.25)
+
+    if validation_records:
+        store.record_many(validation_records)
+
+    dashboard(
+        stats, adaptive, target or len(candidates), found, mode,
+        f"batch complete: {len(candidates)} candidates", force=True
+    )
     return results
-
 
 def checkpoint_payload(mode, length, target, max_checks, found, stats, filters, charset_mode, aesthetic):
     return {
@@ -174,12 +269,15 @@ def checkpoint_payload(mode, length, target, max_checks, found, stats, filters, 
         "taken": stats.taken,
         "inappropriate": stats.inappropriate,
         "other": stats.other,
+        "http_requests": stats.http_requests,
+        "bulk_requests": stats.bulk_requests,
+        "bulk_resolved": stats.bulk_resolved,
+        "individual_validations": stats.individual_validations,
         "elapsed": stats.elapsed,
         "filters": vars(filters),
         "charset_mode": charset_mode,
         "aesthetic": bool(aesthetic),
     }
-
 
 def run_target_scan(length, target, max_checks, filters, charset_mode="m", aesthetic=False, resume=None, label="scan"):
     store = eng.HistoryStore()
@@ -195,28 +293,61 @@ def run_target_scan(length, target, max_checks, filters, charset_mode="m", aesth
     stats.taken = int(resume.get("taken", 0))
     stats.inappropriate = int(resume.get("inappropriate", 0))
     stats.other = int(resume.get("other", 0))
+    stats.http_requests = int(resume.get("http_requests", 0))
+    stats.bulk_requests = int(resume.get("bulk_requests", 0))
+    stats.bulk_resolved = int(resume.get("bulk_resolved", 0))
+    stats.individual_validations = int(resume.get("individual_validations", 0))
     seen = set(found)
     rows = []
 
     chars = charset_for(charset_mode, filters)
     generator = (lambda: base.generate_aesthetic(length)) if aesthetic else (lambda: base.generate_random(length, chars))
 
-    print(f"\nStarting {label}. Cache: {eng.db_path()}")
-    print(f"Workers adapt conservatively between {eng.MIN_WORKERS} and {eng.MAX_WORKERS}; rate limits cause backoff.\n")
+    print(f"\nStarting TURBO {label}. Cache: {eng.db_path()}")
+    print(
+        f"Pipeline: {TURBO_CANDIDATE_BATCH}-name candidate batches -> bulk existence lookup -> "
+        "individual validation only for unresolved survivors."
+    )
+    print(
+        f"Validator workers adapt between {eng.MIN_WORKERS} and {eng.MAX_WORKERS}; "
+        "Roblox 429 responses cause backoff.\n"
+    )
 
     try:
         while len(found) < target and stats.checked < max_checks:
-            batch_size = min(adaptive.workers, max_checks - stats.checked)
+            # The bulk endpoint is where the speed comes from. Decouple candidate
+            # batch size from individual-validator concurrency.
+            batch_size = min(TURBO_CANDIDATE_BATCH, max_checks - stats.checked)
             candidates = generate_unique(batch_size, generator, filters, banned, seen)
             if not candidates:
                 print("\nNo more candidates passed the current filters.")
                 break
-            batch_rows = check_candidates(candidates, store, stats, adaptive, label, target, found)
+
+            batch_rows = check_candidates(
+                candidates,
+                store,
+                stats,
+                adaptive,
+                label,
+                target,
+                found,
+                stop_after_available=target,
+            )
             rows.extend(batch_rows)
-            eng.save_checkpoint(checkpoint_payload(label, length, target, max_checks, found, stats, filters, charset_mode, aesthetic))
+            eng.save_checkpoint(
+                checkpoint_payload(
+                    label, length, target, max_checks, found, stats,
+                    filters, charset_mode, aesthetic
+                )
+            )
     except KeyboardInterrupt:
         print("\n\nScan interrupted. Resume checkpoint saved.")
-        eng.save_checkpoint(checkpoint_payload(label, length, target, max_checks, found, stats, filters, charset_mode, aesthetic))
+        eng.save_checkpoint(
+            checkpoint_payload(
+                label, length, target, max_checks, found, stats,
+                filters, charset_mode, aesthetic
+            )
+        )
         store.close()
         return
 
@@ -224,28 +355,32 @@ def run_target_scan(length, target, max_checks, filters, charset_mode="m", aesth
     store.close()
     finish_scan(rows, found, stats, label)
 
-
 def finish_scan(rows, found, stats, label):
-    print("\n\n" + "=" * 74)
+    print("\n\n" + "=" * 78)
     print(f"{label.upper()} COMPLETE")
-    print("=" * 74)
-    print(f"Checked:           {stats.checked}")
-    print(f"Network checks:    {stats.network_checks}")
-    print(f"Cache hits:        {stats.cache_hits}")
-    print(f"Available users:   {stats.available}")
-    print(f"Taken users:       {stats.taken}")
-    print(f"Inappropriate:     {stats.inappropriate}")
-    print(f"Other/errors:      {stats.other}")
-    print(f"Availability rate: {(stats.available / max(1, stats.checked)) * 100:.2f}%")
-    print(f"Average speed:     {stats.speed:.1f}/s")
-    print(f"Runtime:           {eng.format_duration(stats.elapsed)}")
+    print("=" * 78)
+    print(f"Usernames classified: {stats.checked}")
+    print(f"Cache hits:           {stats.cache_hits}")
+    print(f"Network usernames:    {stats.network_checks}")
+    print(f"Actual HTTP requests: {stats.http_requests}")
+    print(f"Bulk lookup requests: {stats.bulk_requests}")
+    print(f"Resolved by bulk:     {stats.bulk_resolved}")
+    print(f"Individual validators:{stats.individual_validations:>10}")
+    print(f"Available users:      {stats.available}")
+    print(f"Taken users:          {stats.taken}")
+    print(f"Inappropriate:        {stats.inappropriate}")
+    print(f"Other/errors:         {stats.other}")
+    print(f"Availability rate:    {(stats.available / max(1, stats.checked)) * 100:.2f}%")
+    print(f"Average throughput:   {stats.speed:.1f} usernames/s")
+    if stats.http_requests:
+        print(f"Effective density:    {stats.network_checks / stats.http_requests:.1f} usernames/HTTP request")
+    print(f"Runtime:              {eng.format_duration(stats.elapsed)}")
     if found:
         ranked = sorted(found, key=lambda n: (-eng.score_username(n), n))
-        print(f"Best result:       {ranked[0]} ({eng.score_username(ranked[0])}/100)")
+        print(f"Best result:          {ranked[0]} ({eng.score_username(ranked[0])}/100)")
         browse_results(ranked)
     else:
         print("\nNo available names found.")
-
 
 def browse_results(names):
     order = list(dict.fromkeys(names))
@@ -321,7 +456,7 @@ def generate_mode():
     found, rows = [], []
     offset = 0
     while offset < len(names):
-        size = adaptive.workers
+        size = TURBO_CANDIDATE_BATCH
         rows.extend(check_candidates(names[offset:offset+size], store, stats, adaptive, "generate", len(names), found))
         offset += size
     store.close()
@@ -370,7 +505,7 @@ def wordlist_mode():
     found, rows = [], []
     offset = 0
     while offset < len(candidates):
-        size = adaptive.workers
+        size = TURBO_CANDIDATE_BATCH
         rows.extend(check_candidates(candidates[offset:offset+size], store, stats, adaptive, "wordlist", len(candidates), found))
         offset += size
     store.close()
@@ -394,7 +529,7 @@ def mutation_mode():
     found, rows = [], []
     offset = 0
     while offset < len(candidates):
-        size = adaptive.workers
+        size = TURBO_CANDIDATE_BATCH
         rows.extend(check_candidates(candidates[offset:offset+size], store, stats, adaptive, "mutation", len(candidates), found))
         offset += size
     store.close()
