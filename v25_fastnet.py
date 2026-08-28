@@ -201,39 +201,63 @@ class BulkConcurrencyController:
         return min(60.0, max(0.0, max(waits)))
 
 
-def bulk_existing_many(usernames, controller=None):
-    """Run several <=100-name official bulk requests concurrently.
+class BulkScheduler:
+    """Persistent bulk worker pool for an entire scan session."""
 
-    The controller is deliberately small and reacts to Roblox rate-limit
-    responses. This improves wall-clock latency without proxying or evading
-    service limits.
-    """
-    controller = controller or BulkConcurrencyController()
-    batches = list(chunks(usernames))
-    if not batches:
-        return [], controller
+    def __init__(self, controller=None):
+        self.controller = controller or BulkConcurrencyController()
+        self.executor = ThreadPoolExecutor(max_workers=self.controller.maximum)
+        self.closed = False
 
-    results = []
-    # Keep one pool alive for the entire window so TCP/TLS work is not paired
-    # with repeated Python thread creation/destruction.
-    with ThreadPoolExecutor(max_workers=controller.maximum) as executor:
+    def lookup_many(self, usernames):
+        batches = list(chunks(usernames))
+        if not batches:
+            return []
+
+        results = []
         offset = 0
         while offset < len(batches):
-            round_size = controller.workers
+            round_size = self.controller.workers
             round_batches = batches[offset:offset + round_size]
             offset += len(round_batches)
 
-            futures = [executor.submit(bulk_existing, batch) for batch in round_batches]
-            round_results = [future.result() for future in as_completed(futures)]
+            futures = [
+                self.executor.submit(bulk_existing, batch)
+                for batch in round_batches
+            ]
+            round_results = [
+                future.result()
+                for future in as_completed(futures)
+            ]
 
             results.extend(round_results)
-            controller.observe(round_results)
+            self.controller.observe(round_results)
 
-            cooldown = controller.cooldown_seconds(round_results)
+            cooldown = self.controller.cooldown_seconds(round_results)
             if cooldown > 0:
                 time.sleep(cooldown)
 
-    return results, controller
+        return results
+
+    def close(self):
+        if not self.closed:
+            self.executor.shutdown(wait=True, cancel_futures=True)
+            self.closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+
+def bulk_existing_many(usernames, controller=None):
+    """Compatibility helper using a temporary scheduler."""
+    scheduler = BulkScheduler(controller)
+    try:
+        return scheduler.lookup_many(usernames), scheduler.controller
+    finally:
+        scheduler.close()
 
 def tune_requests_session(session, pool_size=POOL_SIZE):
     """Increase requests/urllib3 connection pools for concurrent validators."""
