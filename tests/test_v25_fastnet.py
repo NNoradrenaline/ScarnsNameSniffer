@@ -61,3 +61,53 @@ def test_bulk_lookup_rejects_more_than_100_names():
         assert "at most 100" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_bulk_controller_aimd_and_cooldown():
+    controller = fastnet.BulkConcurrencyController(
+        workers=4, minimum=1, maximum=8
+    )
+    healthy = [fastnet.BulkLookupResult(["a"], {"a"}, True)]
+    controller.observe(healthy)
+    assert controller.workers == 4
+    controller.observe(healthy)
+    assert controller.workers == 5
+
+    limited = [
+        fastnet.BulkLookupResult(
+            ["b"],
+            set(),
+            False,
+            status_code=429,
+            retry_after=2,
+            error="http_429",
+        )
+    ]
+    controller.observe(limited)
+    assert controller.workers == 2
+    assert controller.cooldown_seconds(limited) == 2
+
+
+def test_bulk_existing_many_splits_thousand_names_into_ten_requests(monkeypatch):
+    calls = []
+
+    def fake_bulk(names, timeout=(3.05, 8.0)):
+        calls.append(tuple(names))
+        return fastnet.BulkLookupResult(
+            requested=list(names),
+            existing=set(names),
+            ok=True,
+            status_code=200,
+        )
+
+    monkeypatch.setattr(fastnet, "bulk_existing", fake_bulk)
+    controller = fastnet.BulkConcurrencyController(
+        workers=4, minimum=1, maximum=8
+    )
+    names = [f"name{i:04d}" for i in range(1000)]
+    results, controller = fastnet.bulk_existing_many(names, controller)
+
+    assert len(results) == 10
+    assert len(calls) == 10
+    assert all(len(call) == 100 for call in calls)
+    assert sum(len(result.existing) for result in results) == 1000
