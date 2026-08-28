@@ -2,6 +2,7 @@
   "use strict";
 
   const USERNAME_RE = /^[A-Za-z0-9_]{3,20}$/;
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const PAYLOAD_PREFIX = "SCARN_AUTOFILL_V2|";
   const LOWER = "abcdefghijkmnopqrstuvwxyz";
   const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -138,6 +139,64 @@
     const option = [...select.options].find(opt => wanted.has(normalize(opt.value)) || wanted.has(normalize(opt.textContent)));
     if (!option) return false;
     setNativeValue(select, option.value);
+    return true;
+  }
+
+  async function getEmailSettings() {
+    return new Promise(resolve => {
+      chrome.storage.local.get(
+        { emailAddress: "", autoAddEmail: false },
+        ({ emailAddress, autoAddEmail }) => {
+          resolve({
+            emailAddress: String(emailAddress || "").trim(),
+            autoAddEmail: autoAddEmail === true
+          });
+        }
+      );
+    });
+  }
+
+  async function armEmailSetup(username, password) {
+    const settings = await getEmailSettings();
+    if (!settings.autoAddEmail || !EMAIL_RE.test(settings.emailAddress)) {
+      return false;
+    }
+
+    const now = Date.now();
+    const pending = {
+      username,
+      email: settings.emailAddress,
+      armedAt: now,
+      expiresAt: now + 15 * 60 * 1000,
+      status: "waiting-for-signup"
+    };
+
+    await new Promise(resolve => {
+      chrome.storage.local.set(
+        {
+          emailSetupPending: pending,
+          emailSetupStatus: `Waiting for ${username} to finish signup before adding ${settings.emailAddress}.`
+        },
+        resolve
+      );
+    });
+
+    if (password) {
+      await new Promise(resolve => {
+        chrome.storage.session.set(
+          {
+            pendingSignupSecret: {
+              username,
+              password,
+              armedAt: now,
+              expiresAt: pending.expiresAt
+            }
+          },
+          resolve
+        );
+      });
+    }
+
     return true;
   }
 
@@ -317,6 +376,7 @@
       birthday = result.birthday;
       if (mainFieldsFilled && (!birthday || birthdayFilled)) {
         rememberAccount(account.username, birthday, account.saved);
+        await armEmailSetup(account.username, generatedPassword);
         makePanel(account.username, generatedPassword, birthday, birthdayFilled, account.saved);
         return true;
       }
@@ -325,6 +385,7 @@
 
     if (mainFieldsFilled) {
       rememberAccount(account.username, birthday, account.saved);
+      await armEmailSetup(account.username, generatedPassword);
       makePanel(account.username, generatedPassword, birthday, birthdayFilled, account.saved);
       return true;
     }
