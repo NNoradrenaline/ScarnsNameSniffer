@@ -1,4 +1,4 @@
-# Scarn's Name Sniffer Autofill Companion v2.5
+# Scarn's Name Sniffer Autofill Companion v2.5.1
 
 This optional Chrome/Edge extension works with the Name Sniffer v2.5 Windows EXE.
 
@@ -19,6 +19,32 @@ The Enter shortcut does not bypass CAPTCHA, verification, rate limits, disabled 
 
 Passwords are not stored in extension history or plaintext files. When secure saving succeeds, the password is stored by Windows Credential Manager under the current Windows account.
 
+## Auto-add recovery email
+
+The extension can optionally add one recovery email after a newly created account signs in.
+
+1. Click the extension icon.
+2. Enter your recovery email.
+3. Enable **Automatically add email after signup**.
+4. Save settings.
+5. Use Name Sniffer normally.
+
+After signup, the helper:
+
+- waits until Roblox reports that the newly prepared username is the account currently logged in
+- opens **Settings > Account Info**
+- uses the normal **Add Email** control
+- fills the saved email address
+- fills the temporary signup password only if Roblox asks for it
+- activates Roblox's normal **Add Email / Send Verification** button
+- stops and tells you to check your inbox
+
+The extension **does not read your inbox, click the verification link, enter an emailed code, or bypass any Roblox verification step**. You complete verification manually from your email.
+
+The helper also refuses to use **Update Email / Change Email / Remove Email**. If an account already appears to have an email, it stops instead of replacing it.
+
+The saved email is stored in Chrome/Edge extension local storage. A signup password needed by the Add Email dialog is kept only in extension **session** storage behind the background service worker, expires after 15 minutes, and is cleared after the verification request.
+
 ## Install from Releases
 
 Download `ScarnsNameSniffer-Autofill-v2.5.zip` from the project's GitHub Releases page and extract it before loading the extension.
@@ -27,9 +53,10 @@ Download `ScarnsNameSniffer-Autofill-v2.5.zip` from the project's GitHub Release
 
 1. Click the **Scarn's Name Sniffer Autofill** extension icon in Chrome or Edge.
 2. Choose the account holder's actual birthday.
-3. Click **Save birthday**.
-4. Leave **Press Enter to submit signup** enabled if you want the Enter shortcut.
-5. Run Name Sniffer normally.
+3. Optionally enter a recovery email and enable **Automatically add email after signup**.
+4. Click **Save settings**.
+5. Leave **Press Enter to submit signup** enabled if you want the Enter shortcut.
+6. Run Name Sniffer normally.
 
 ## Install in Chrome
 
