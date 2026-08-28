@@ -8,6 +8,9 @@ on:
       - "roblox_name_gen.py"
       - "v25_launcher.py"
       - "v25_scanner.py"
+      - "v25_engine.py"
+      - "tests/**"
+      - "portable.flag.example"
       - "v25_entry.py"
       - "requirements.txt"
       - "icon.ico"
@@ -37,6 +40,7 @@ jobs:
           python -m py_compile roblox_name_gen.py
           python -m py_compile v25_launcher.py
           python -m py_compile v25_scanner.py
+          python -m py_compile v25_engine.py
           python -m py_compile v25_entry.py
 
       - name: Install dependencies
@@ -45,6 +49,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
+          python -m pip install pytest
+
+      - name: Run test suite
+        shell: pwsh
+        run: |
+          python -m pytest -q
 
       - name: Build Scarn's Name Sniffer v2.5
         shell: pwsh
@@ -61,6 +71,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path package | Out-Null
           Copy-Item dist/ScarnsNameSniffer.exe package/ScarnsNameSniffer.exe
           Copy-Item browser-extension package/browser-extension -Recurse
+          Copy-Item portable.flag.example package/portable.flag.example
           Compress-Archive -Path browser-extension\* -DestinationPath package\ScarnsNameSniffer-Autofill-v2.5.zip -Force
           Compress-Archive -Path browser-extension\* -DestinationPath ScarnsNameSniffer-Autofill-v2.5.zip -Force
 
