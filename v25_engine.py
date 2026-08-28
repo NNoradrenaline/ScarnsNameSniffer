@@ -9,7 +9,7 @@ from pathlib import Path
 APP_NAME = "ScarnsNameSniffer"
 REPO = "NNoradrenaline/ScarnsNameSniffer"
 GITHUB_LATEST_RELEASE = f"https://api.github.com/repos/{REPO}/releases/latest"
-DEFAULT_WORKERS, MIN_WORKERS, MAX_WORKERS = 12, 6, 20
+DEFAULT_WORKERS, MIN_WORKERS, MAX_WORKERS = 16, 4, 32
 CACHE_TTLS = {"available": 900, "taken": 2592000, "inappropriate": 7776000, "invalid_format": 7776000, "invalid_length": 7776000}
 DEFAULT_CACHE_TTL = 3600
 BUILTIN_PRESETS = {
@@ -76,15 +76,19 @@ class AdaptiveWorkers:
     def __init__(self,workers=DEFAULT_WORKERS,minimum=MIN_WORKERS,maximum=MAX_WORKERS):
         self.minimum=minimum; self.maximum=maximum; self.workers=max(minimum,min(maximum,workers)); self.healthy_streak=0
     def observe(self,statuses):
+        """AIMD-style concurrency control: ramp on health, cut hard on 429."""
         statuses=list(statuses)
         if not statuses:return self.workers
         rl=sum(s=="ratelimited" for s in statuses)
         errors=sum(s=="csrf_blocked" or s.startswith("http_") or s.startswith("error(") for s in statuses)
-        if rl: self.workers=max(self.minimum,self.workers-4); self.healthy_streak=0
-        elif errors/len(statuses)>=.25: self.workers=max(self.minimum,self.workers-2); self.healthy_streak=0
+        if rl:
+            self.workers=max(self.minimum,max(1,self.workers//2)); self.healthy_streak=0
+        elif errors/len(statuses)>=.25:
+            self.workers=max(self.minimum,self.workers-4); self.healthy_streak=0
         else:
             self.healthy_streak+=1
-            if self.healthy_streak>=3: self.workers=min(self.maximum,self.workers+2); self.healthy_streak=0
+            if self.healthy_streak>=2:
+                self.workers=min(self.maximum,self.workers+4); self.healthy_streak=0
         return self.workers
 
 class HistoryStore:
