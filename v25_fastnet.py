@@ -206,9 +206,14 @@ class BulkScheduler:
 
     def __init__(self, controller=None):
         self.controller = controller or BulkConcurrencyController()
-        self.executor = ThreadPoolExecutor(max_workers=self.controller.maximum)
+        self.executor = None
         self.closed = False
         self.submitted_requests = 0
+
+    def _ensure_executor(self):
+        if self.executor is None:
+            self.executor = ThreadPoolExecutor(max_workers=self.controller.maximum)
+        return self.executor
 
     def iter_lookup_many(self, usernames):
         """Yield bulk results as soon as each request completes.
@@ -224,8 +229,9 @@ class BulkScheduler:
             round_batches = batches[offset:offset + round_size]
             offset += len(round_batches)
 
+            executor = self._ensure_executor()
             futures = [
-                self.executor.submit(bulk_existing, batch)
+                executor.submit(bulk_existing, batch)
                 for batch in round_batches
             ]
             self.submitted_requests += len(futures)
@@ -253,7 +259,8 @@ class BulkScheduler:
 
     def close(self, wait=True):
         if not self.closed:
-            self.executor.shutdown(wait=wait, cancel_futures=True)
+            if self.executor is not None:
+                self.executor.shutdown(wait=wait, cancel_futures=True)
             self.closed = True
 
     def __enter__(self):
