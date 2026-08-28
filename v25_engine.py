@@ -8,7 +8,7 @@ from pathlib import Path
 
 APP_NAME = "ScarnsNameSniffer"
 REPO = "NNoradrenaline/ScarnsNameSniffer"
-GITHUB_LATEST_RELEASE = `https://api.github.com/repos/${REPO}/releases/latest`
+GITHUB_LATEST_RELEASE = f"https://api.github.com/repos/{REPO}/releases/latest"
 DEFAULT_WORKERS, MIN_WORKERS, MAX_WORKERS = 12, 6, 20
 CACHE_TTLS = {"available": 900, "taken": 2592000, "inappropriate": 7776000, "invalid_format": 7776000, "invalid_length": 7776000}
 DEFAULT_CACHE_TTL = 3600
