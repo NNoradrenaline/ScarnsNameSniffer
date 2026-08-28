@@ -251,9 +251,9 @@ class BulkScheduler:
     def lookup_many(self, usernames):
         return list(self.iter_lookup_many(usernames))
 
-    def close(self):
+    def close(self, wait=True):
         if not self.closed:
-            self.executor.shutdown(wait=True, cancel_futures=True)
+            self.executor.shutdown(wait=wait, cancel_futures=True)
             self.closed = True
 
     def __enter__(self):
