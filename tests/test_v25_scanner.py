@@ -329,3 +329,49 @@ def test_unique_source_generation_does_not_need_seen_set():
     )
     assert len(out) == 4
     assert len(set(out)) == 4
+
+
+def test_pipeline_stops_before_consuming_second_bulk_result(monkeypatch):
+    class EarlyStopScheduler:
+        def __init__(self):
+            self.controller = fastnet.BulkConcurrencyController(
+                workers=2, minimum=1, maximum=2
+            )
+            self.submitted_requests = 0
+
+        def iter_lookup_many(self, names):
+            self.submitted_requests += 2
+            yield bulk_result(["freeone"], existing=set())
+            raise AssertionError(
+                "second bulk result was consumed after target was already reached"
+            )
+
+    calls = []
+
+    def validator(name):
+        calls.append(name)
+        return (name, "available")
+
+    monkeypatch.setattr(scanner.base, "smart_check", validator)
+
+    store = FakeStore()
+    stats = eng.ScanStats(time.time())
+    adaptive = eng.AdaptiveWorkers(workers=1, minimum=1, maximum=1)
+    found = []
+    scheduler = EarlyStopScheduler()
+
+    scanner.check_candidates(
+        ["freeone", "laterone"],
+        store,
+        stats,
+        adaptive,
+        "pipeline",
+        target=1,
+        found=found,
+        stop_after_available=1,
+        bulk_scheduler=scheduler,
+    )
+
+    assert calls == ["freeone"]
+    assert found == ["freeone"]
+    assert stats.bulk_requests == 2
