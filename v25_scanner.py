@@ -168,13 +168,21 @@ def check_candidates(
     found=None,
     stop_after_available=None,
     bulk_controller=None,
+    bulk_scheduler=None,
+    validator_executor=None,
     collect_rows=True,
+    candidates_unique=False,
 ):
     """Fast path: one cache query -> concurrent bulk lookups -> survivor validators."""
     results = []
     found = found if found is not None else []
     bulk_controller = bulk_controller or fastnet.BulkConcurrencyController()
-    candidates = list(dict.fromkeys(name.lower() for name in candidates))
+    if bulk_scheduler is not None:
+        bulk_controller = bulk_scheduler.controller
+    if candidates_unique:
+        candidates = [name.lower() for name in candidates]
+    else:
+        candidates = list(dict.fromkeys(name.lower() for name in candidates))
     if not candidates:
         return results
 
@@ -229,10 +237,16 @@ def check_candidates(
         return results
 
     # Resolve taken usernames in multiple official <=100-name requests at once.
-    bulk_results, _ = fastnet.bulk_existing_many(uncached, bulk_controller)
+    if bulk_scheduler is not None:
+        bulk_results = bulk_scheduler.lookup_many(uncached)
+    else:
+        bulk_results, _ = fastnet.bulk_existing_many(uncached, bulk_controller)
+
     survivors = []
     pending_records = []
     bulk_status_signals = []
+    bulk_taken_total = 0
+    bulk_survivor_total = 0
 
     for lookup in bulk_results:
         stats.http_requests += 1
@@ -264,16 +278,8 @@ def check_candidates(
 
             survivors.extend(name for name in chunk if name not in existing)
 
-            dashboard(
-                stats,
-                adaptive,
-                target or len(candidates),
-                found,
-                mode,
-                f"bulk {len(chunk)} -> {len(existing)} taken / {len(chunk)-len(existing)} survivors",
-                f"[bulk x{bulk_controller.workers}]",
-                force=True,
-            )
+            bulk_taken_total += len(existing)
+            bulk_survivor_total += len(chunk) - len(existing)
         else:
             # Correctness first: unresolved bulk failures fall through to the
             # authoritative signup validator. 429 handling/backoff happens in
@@ -282,6 +288,17 @@ def check_candidates(
             bulk_status_signals.append(
                 "ratelimited" if lookup.status_code == 429 else (lookup.error or "bulk_error")
             )
+
+    dashboard(
+        stats,
+        adaptive,
+        target or len(candidates),
+        found,
+        mode,
+        f"bulk resolved {bulk_taken_total} taken / {bulk_survivor_total} survivors",
+        f"[bulk x{bulk_controller.workers}]",
+        force=True,
+    )
 
     if stop_after_available is not None and len(found) >= stop_after_available:
         if pending_records:
@@ -293,7 +310,9 @@ def check_candidates(
     validation_records = []
     offset = 0
 
-    with base.ThreadPoolExecutor(max_workers=adaptive.maximum) as executor:
+    owns_validator_executor = validator_executor is None
+    executor = validator_executor or base.ThreadPoolExecutor(max_workers=adaptive.maximum)
+    try:
         while offset < len(survivors):
             if stop_after_available is not None and len(found) >= stop_after_available:
                 break
@@ -352,6 +371,10 @@ def check_candidates(
             elif adaptive.workers < before:
                 time.sleep(0.15)
 
+    finally:
+        if owns_validator_executor:
+            executor.shutdown(wait=True, cancel_futures=True)
+
     all_records = pending_records + validation_records
     if all_records:
         store.record_many(all_records)
@@ -408,6 +431,8 @@ def run_target_scan(length, target, max_checks, filters, charset_mode="m", aesth
     banned = eng.load_banned_patterns()
     adaptive = eng.AdaptiveWorkers()
     bulk_controller = fastnet.BulkConcurrencyController()
+    bulk_scheduler = fastnet.BulkScheduler(bulk_controller)
+    validator_executor = base.ThreadPoolExecutor(max_workers=adaptive.maximum)
     resume = resume or {}
 
     stats = eng.ScanStats(time.time() - float(resume.get("elapsed", 0)))
@@ -504,7 +529,10 @@ def run_target_scan(length, target, max_checks, filters, charset_mode="m", aesth
                 found,
                 stop_after_available=target,
                 bulk_controller=bulk_controller,
+                bulk_scheduler=bulk_scheduler,
+                validator_executor=validator_executor,
                 collect_rows=False,
+                candidates_unique=not aesthetic,
             )
             checkpoint(False)
 
@@ -513,6 +541,9 @@ def run_target_scan(length, target, max_checks, filters, charset_mode="m", aesth
         checkpoint(True)
         store.close()
         return
+    finally:
+        bulk_scheduler.close()
+        validator_executor.shutdown(wait=True, cancel_futures=True)
 
     eng.clear_checkpoint()
     store.close()
@@ -627,15 +658,25 @@ def generate_mode():
     stats = eng.ScanStats(time.time())
     adaptive = eng.AdaptiveWorkers()
     bulk_controller = fastnet.BulkConcurrencyController()
+    bulk_scheduler = fastnet.BulkScheduler(bulk_controller)
+    validator_executor = base.ThreadPoolExecutor(max_workers=adaptive.maximum)
     found = []
     offset = 0
-    while offset < len(names):
-        size = TURBO_WINDOW_SIZE
-        check_candidates(
-            names[offset:offset+size], store, stats, adaptive, "generate",
-            len(names), found, bulk_controller=bulk_controller, collect_rows=False
-        )
-        offset += size
+    try:
+        while offset < len(names):
+            size = TURBO_WINDOW_SIZE
+            check_candidates(
+                names[offset:offset+size], store, stats, adaptive, "generate",
+                len(names), found, bulk_controller=bulk_controller,
+                bulk_scheduler=bulk_scheduler,
+                validator_executor=validator_executor,
+                collect_rows=False,
+                candidates_unique=True,
+            )
+            offset += size
+    finally:
+        bulk_scheduler.close()
+        validator_executor.shutdown(wait=True, cancel_futures=True)
     store.close()
     finish_scan([], found, stats, "generate")
 
@@ -680,15 +721,25 @@ def wordlist_mode():
     stats = eng.ScanStats(time.time())
     adaptive = eng.AdaptiveWorkers()
     bulk_controller = fastnet.BulkConcurrencyController()
+    bulk_scheduler = fastnet.BulkScheduler(bulk_controller)
+    validator_executor = base.ThreadPoolExecutor(max_workers=adaptive.maximum)
     found = []
     offset = 0
-    while offset < len(candidates):
-        size = TURBO_WINDOW_SIZE
-        check_candidates(
-            candidates[offset:offset+size], store, stats, adaptive, "wordlist",
-            len(candidates), found, bulk_controller=bulk_controller, collect_rows=False
-        )
-        offset += size
+    try:
+        while offset < len(candidates):
+            size = TURBO_WINDOW_SIZE
+            check_candidates(
+                candidates[offset:offset+size], store, stats, adaptive, "wordlist",
+                len(candidates), found, bulk_controller=bulk_controller,
+                bulk_scheduler=bulk_scheduler,
+                validator_executor=validator_executor,
+                collect_rows=False,
+                candidates_unique=True,
+            )
+            offset += size
+    finally:
+        bulk_scheduler.close()
+        validator_executor.shutdown(wait=True, cancel_futures=True)
     store.close()
     finish_scan([], found, stats, "wordlist")
 
@@ -708,15 +759,25 @@ def mutation_mode():
     stats = eng.ScanStats(time.time())
     adaptive = eng.AdaptiveWorkers()
     bulk_controller = fastnet.BulkConcurrencyController()
+    bulk_scheduler = fastnet.BulkScheduler(bulk_controller)
+    validator_executor = base.ThreadPoolExecutor(max_workers=adaptive.maximum)
     found = []
     offset = 0
-    while offset < len(candidates):
-        size = TURBO_WINDOW_SIZE
-        check_candidates(
-            candidates[offset:offset+size], store, stats, adaptive, "mutation",
-            len(candidates), found, bulk_controller=bulk_controller, collect_rows=False
-        )
-        offset += size
+    try:
+        while offset < len(candidates):
+            size = TURBO_WINDOW_SIZE
+            check_candidates(
+                candidates[offset:offset+size], store, stats, adaptive, "mutation",
+                len(candidates), found, bulk_controller=bulk_controller,
+                bulk_scheduler=bulk_scheduler,
+                validator_executor=validator_executor,
+                collect_rows=False,
+                candidates_unique=True,
+            )
+            offset += size
+    finally:
+        bulk_scheduler.close()
+        validator_executor.shutdown(wait=True, cancel_futures=True)
     store.close()
     finish_scan([], found, stats, "mutation")
 
