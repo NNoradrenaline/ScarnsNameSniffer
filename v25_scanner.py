@@ -173,17 +173,22 @@ def check_candidates(
     collect_rows=True,
     candidates_unique=False,
 ):
-    """Fast path: one cache query -> concurrent bulk lookups -> survivor validators."""
+    """Pipeline cache -> streaming bulk lookup -> immediate survivor validation."""
     results = []
     found = found if found is not None else []
     bulk_controller = bulk_controller or fastnet.BulkConcurrencyController()
-    if bulk_scheduler is not None:
-        bulk_controller = bulk_scheduler.controller
+
+    owns_bulk_scheduler = bulk_scheduler is None
+    scheduler = bulk_scheduler or fastnet.BulkScheduler(bulk_controller)
+    bulk_controller = scheduler.controller
+
     if candidates_unique:
         candidates = [name.lower() for name in candidates]
     else:
         candidates = list(dict.fromkeys(name.lower() for name in candidates))
     if not candidates:
+        if owns_bulk_scheduler:
+            scheduler.close()
         return results
 
     cached_map = store.cached_status_many(candidates)
@@ -219,7 +224,6 @@ def check_candidates(
                 found.append(name)
                 print_available_live(name)
 
-    if cached_map:
         dashboard(
             stats,
             adaptive,
@@ -232,93 +236,34 @@ def check_candidates(
         )
 
     if stop_after_available is not None and len(found) >= stop_after_available:
+        if owns_bulk_scheduler:
+            scheduler.close(wait=False)
         return results
     if not uncached:
+        if owns_bulk_scheduler:
+            scheduler.close()
         return results
 
-    # Resolve taken usernames in multiple official <=100-name requests at once.
-    if bulk_scheduler is not None:
-        bulk_results = bulk_scheduler.lookup_many(uncached)
-    else:
-        bulk_results, _ = fastnet.bulk_existing_many(uncached, bulk_controller)
+    owns_validator_executor = validator_executor is None
+    executor = validator_executor or base.ThreadPoolExecutor(max_workers=adaptive.maximum)
 
-    survivors = []
     pending_records = []
+    validation_records = []
     bulk_status_signals = []
     bulk_taken_total = 0
     bulk_survivor_total = 0
 
-    for lookup in bulk_results:
-        stats.http_requests += 1
-        stats.bulk_requests += 1
-        chunk = lookup.requested
+    def validate_names(names):
+        """Validate one bulk result's survivors immediately."""
+        nonlocal validation_records
+        offset = 0
 
-        if lookup.ok:
-            existing = lookup.existing
-            taken_count = len(existing)
-            if taken_count:
-                stats.checked += taken_count
-                stats.network_checks += taken_count
-                stats.taken += taken_count
-                stats.bulk_resolved += taken_count
-                pending_records.extend((name, "taken", 0, mode) for name in existing)
-
-                if collect_rows:
-                    checked_at = eng.utc_iso()
-                    results.extend(
-                        {
-                            "username": name,
-                            "status": "taken",
-                            "score": 0,
-                            "length": len(name),
-                            "checked_at": checked_at,
-                        }
-                        for name in existing
-                    )
-
-            survivors.extend(name for name in chunk if name not in existing)
-
-            bulk_taken_total += len(existing)
-            bulk_survivor_total += len(chunk) - len(existing)
-        else:
-            # Correctness first: unresolved bulk failures fall through to the
-            # authoritative signup validator. 429 handling/backoff happens in
-            # v25_fastnet before another bulk round is launched.
-            survivors.extend(chunk)
-            bulk_status_signals.append(
-                "ratelimited" if lookup.status_code == 429 else (lookup.error or "bulk_error")
-            )
-
-    dashboard(
-        stats,
-        adaptive,
-        target or len(candidates),
-        found,
-        mode,
-        f"bulk resolved {bulk_taken_total} taken / {bulk_survivor_total} survivors",
-        f"[bulk x{bulk_controller.workers}]",
-        force=True,
-    )
-
-    if stop_after_available is not None and len(found) >= stop_after_available:
-        if pending_records:
-            store.record_many(pending_records)
-        return results
-
-    # Validate only bulk survivors. Score calculation is deferred until a name
-    # is actually available; taken/inappropriate names do not waste CPU on it.
-    validation_records = []
-    offset = 0
-
-    owns_validator_executor = validator_executor is None
-    executor = validator_executor or base.ThreadPoolExecutor(max_workers=adaptive.maximum)
-    try:
-        while offset < len(survivors):
+        while offset < len(names):
             if stop_after_available is not None and len(found) >= stop_after_available:
-                break
+                return True
 
-            wave_size = min(adaptive.workers, len(survivors) - offset)
-            wave = survivors[offset:offset + wave_size]
+            wave_size = min(adaptive.workers, len(names) - offset)
+            wave = names[offset:offset + wave_size]
             offset += wave_size
 
             futures = {executor.submit(base.smart_check, name): name for name in wave}
@@ -365,15 +310,99 @@ def check_candidates(
 
             before = adaptive.workers
             adaptive.observe(wave_statuses + bulk_status_signals)
+
             if "ratelimited" in wave_statuses:
                 print("\n  Signup validator rate-limited. Cooling down before continuing.")
                 time.sleep(2.0)
             elif adaptive.workers < before:
                 time.sleep(0.15)
 
+        return stop_after_available is not None and len(found) >= stop_after_available
+
+    submitted_before = scheduler.submitted_requests
+    submitted_accounted = submitted_before
+    lookup_iter = scheduler.iter_lookup_many(uncached)
+
+    try:
+        for lookup in lookup_iter:
+            # iter_lookup_many submits a whole concurrency round before yielding
+            # its first result. Count every launched request, including siblings
+            # that are still in flight while this result is being validated.
+            if scheduler.submitted_requests > submitted_accounted:
+                launched = scheduler.submitted_requests - submitted_accounted
+                stats.bulk_requests += launched
+                stats.http_requests += launched
+                submitted_accounted = scheduler.submitted_requests
+
+            chunk = lookup.requested
+
+            if lookup.ok:
+                existing = lookup.existing
+                taken_count = len(existing)
+
+                if taken_count:
+                    stats.checked += taken_count
+                    stats.network_checks += taken_count
+                    stats.taken += taken_count
+                    stats.bulk_resolved += taken_count
+                    pending_records.extend((name, "taken", 0, mode) for name in existing)
+
+                    if collect_rows:
+                        checked_at = eng.utc_iso()
+                        results.extend(
+                            {
+                                "username": name,
+                                "status": "taken",
+                                "score": 0,
+                                "length": len(name),
+                                "checked_at": checked_at,
+                            }
+                            for name in existing
+                        )
+
+                survivors = [name for name in chunk if name not in existing]
+                bulk_taken_total += taken_count
+                bulk_survivor_total += len(survivors)
+
+            else:
+                # Bulk failures fall through to the signup validator so the
+                # result remains correct. The bulk scheduler itself handles
+                # server-directed cooldown before launching another round.
+                survivors = list(chunk)
+                bulk_status_signals.append(
+                    "ratelimited"
+                    if lookup.status_code == 429
+                    else (lookup.error or "bulk_error")
+                )
+
+            # Critical latency optimization: do not wait for sibling bulk
+            # requests. They continue in the bulk executor while these
+            # survivors are validated right now.
+            if survivors and validate_names(survivors):
+                break
+
     finally:
+        # Closing the generator cancels bulk futures that have not started.
+        try:
+            lookup_iter.close()
+        except Exception:
+            pass
+
+        if scheduler.submitted_requests > submitted_accounted:
+            launched = scheduler.submitted_requests - submitted_accounted
+            stats.bulk_requests += launched
+            stats.http_requests += launched
+
         if owns_validator_executor:
             executor.shutdown(wait=True, cancel_futures=True)
+
+        if owns_bulk_scheduler:
+            scheduler.close(
+                wait=not (
+                    stop_after_available is not None
+                    and len(found) >= stop_after_available
+                )
+            )
 
     all_records = pending_records + validation_records
     if all_records:
@@ -385,7 +414,8 @@ def check_candidates(
         target or len(candidates),
         found,
         mode,
-        f"window complete: {len(candidates)} candidates",
+        f"pipeline: {bulk_taken_total} bulk-taken / {bulk_survivor_total} survivors",
+        f"[bulk x{bulk_controller.workers}]",
         force=True,
     )
     return results
@@ -542,7 +572,7 @@ def run_target_scan(length, target, max_checks, filters, charset_mode="m", aesth
         store.close()
         return
     finally:
-        bulk_scheduler.close()
+        bulk_scheduler.close(wait=not (len(found) >= target))
         validator_executor.shutdown(wait=True, cancel_futures=True)
 
     eng.clear_checkpoint()
