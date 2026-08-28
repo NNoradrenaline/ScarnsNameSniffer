@@ -107,12 +107,15 @@
       ["emailAddress", "emailSetupPending", "emailSetupStatus"],
       () => {
         chrome.storage.local.set({ autoAddEmail: false }, () => {
-          chrome.storage.session.remove("pendingSignupSecret", () => {
-            email.value = "";
-            autoEmail.checked = false;
-            status.textContent =
-              "Saved email and pending email job cleared.";
-          });
+          chrome.runtime.sendMessage(
+            { type: "scarn:clearPendingSecret" },
+            () => {
+              email.value = "";
+              autoEmail.checked = false;
+              status.textContent =
+                "Saved email and pending email job cleared.";
+            }
+          );
         });
       }
     );
