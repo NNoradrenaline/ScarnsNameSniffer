@@ -214,18 +214,24 @@ def bulk_existing_many(usernames, controller=None):
         return [], controller
 
     results = []
-    for offset in range(0, len(batches), controller.workers):
-        round_batches = batches[offset:offset + controller.workers]
-        with ThreadPoolExecutor(max_workers=min(controller.workers, len(round_batches))) as executor:
+    # Keep one pool alive for the entire window so TCP/TLS work is not paired
+    # with repeated Python thread creation/destruction.
+    with ThreadPoolExecutor(max_workers=controller.maximum) as executor:
+        offset = 0
+        while offset < len(batches):
+            round_size = controller.workers
+            round_batches = batches[offset:offset + round_size]
+            offset += len(round_batches)
+
             futures = [executor.submit(bulk_existing, batch) for batch in round_batches]
             round_results = [future.result() for future in as_completed(futures)]
 
-        results.extend(round_results)
-        controller.observe(round_results)
+            results.extend(round_results)
+            controller.observe(round_results)
 
-        cooldown = controller.cooldown_seconds(round_results)
-        if cooldown > 0:
-            time.sleep(cooldown)
+            cooldown = controller.cooldown_seconds(round_results)
+            if cooldown > 0:
+                time.sleep(cooldown)
 
     return results, controller
 
