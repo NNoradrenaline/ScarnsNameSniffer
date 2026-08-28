@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Name Sniffer Autofill</title>
   <style>
-    body { width: 310px; margin: 0; padding: 16px; background: #0f141c; color: #eef4ff; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    body { width: 320px; margin: 0; padding: 16px; background: #0f141c; color: #eef4ff; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
     h1 { font-size: 16px; margin: 0 0 8px; }
     p { color: #9fb0c2; margin: 0 0 14px; }
     label { display: block; font-weight: 700; margin-bottom: 6px; }
-    input[type="date"] { width: 100%; box-sizing: border-box; border: 1px solid #314052; border-radius: 8px; background: #080b10; color: #eef4ff; padding: 9px 10px; }
+    input[type="date"], input[type="email"] { width: 100%; box-sizing: border-box; border: 1px solid #314052; border-radius: 8px; background: #080b10; color: #eef4ff; padding: 9px 10px; }
     .row { display: flex; gap: 8px; margin-top: 10px; }
     .toggle { display:flex; align-items:center; gap:8px; margin-top:14px; font-weight:700; }
     .toggle input { width:auto; }
@@ -20,18 +20,31 @@
   </style>
 </head>
 <body>
-  <h1>🔎 Name Sniffer Autofill v2.5</h1>
-  <p>Set the birthday to use on Roblox signup.</p>
+  <h1>🔎 Name Sniffer Autofill v2.5.1</h1>
+  <p>Set the signup birthday and optional recovery email.</p>
+
   <label for="birthday">Birthday</label>
   <input id="birthday" type="date" autocomplete="bday">
+
+  <label for="email" style="margin-top:14px">Recovery email</label>
+  <input id="email" type="email" autocomplete="email" placeholder="you@example.com">
+
+  <label class="toggle"><input id="auto-email" type="checkbox"> Automatically add email after signup</label>
+
   <div class="row">
-    <button id="save" class="primary">Save birthday</button>
-    <button id="clear">Clear</button>
+    <button id="save" class="primary">Save settings</button>
+    <button id="clear-birthday">Clear birthday</button>
   </div>
+  <div class="row">
+    <button id="clear-email">Clear email</button>
+  </div>
+
   <label class="toggle"><input id="enter-submit" type="checkbox"> Press Enter to submit signup</label>
+
   <div id="status"></div>
   <div id="history" class="note"></div>
-  <div class="note">Passwords stay in Windows Credential Manager. Enter-to-submit only uses Roblox's normal Create Account button after the form is filled and does not bypass CAPTCHA, verification, disabled buttons, or rate limits.</div>
+  <div class="note">Auto-add Email only uses Roblox's normal Add Email flow after confirming the newly created username is logged in. It stops after requesting the verification email, and you verify it manually from your inbox. Existing emails are never replaced. Any password needed by the Add Email dialog is kept only in browser-session storage.</div>
+
   <script src="popup.js"></script>
 </body>
 </html>
