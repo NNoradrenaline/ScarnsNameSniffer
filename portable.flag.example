@@ -1,0 +1,3 @@
+Rename this file to portable.flag and place it beside ScarnsNameSniffer.exe to enable portable mode.
+
+Portable mode stores scanner history, presets, exclusions, resume data, and exports under a local data/ folder beside the EXE.
