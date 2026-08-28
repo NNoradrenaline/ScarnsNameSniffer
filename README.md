@@ -47,7 +47,7 @@ Generate names, check Roblox username availability, filter for more word-like re
 
 Fetching CSRF token... OK
 
-Mode: [s]can [g]enerate [a]esthetic-only [m]anual [w]ordlist [c]redentials?
+[s] scan  [a] aesthetic  [g] generate  [m] manual  [w] wordlist\n[x] mutate [p] presets [v] watchlist [r] resume [c] credentials\n[b] exclusions [d] diagnostics [u] updates [q] quit
 ```
 
 ### Modes
@@ -73,6 +73,49 @@ Mode: [s]can [g]enerate [a]esthetic-only [m]anual [w]ordlist [c]redentials?
 - The included browser companion lets you press **Enter** to activate Roblox's normal Create Account / Sign Up button after the form is filled.
 - The Enter shortcut does **not** bypass CAPTCHA, verification, rate limits, disabled buttons, or any other Roblox protections.
 - The Windows release includes both the EXE and the browser extension.
+
+---
+
+## 🧠 Advanced Scanner Features
+
+The v2.5 scanner now includes a local search-engine layer around the existing Roblox availability checker:
+
+- **SQLite scan history + smart caching** — fresh results are reused locally instead of wasting another request. Available names expire quickly; taken and inappropriate results live longer; errors and rate-limit responses are never cached.
+- **Adaptive concurrency** — starts conservatively and slowly increases workers after healthy batches. Rate limiting and elevated request errors reduce concurrency and trigger cooldowns.
+- **Advanced filters** — control digits, underscores, maximum digit count, starting character, vowel requirement, adjacent repeats, and custom excluded patterns.
+- **Username ranking** — every available result gets a 0–100 cleanliness/word-likeness score and a label such as Excellent, Great, or Good.
+- **Persistent duplicate prevention** — previously checked names live in the SQLite history so repeated scans can reuse valid cached knowledge.
+- **Scan presets** — built-in Rare 4, Clean 5, and Mixed 6 presets, plus custom presets saved from your own scan settings.
+- **Watchlist** — save interesting usernames and manually recheck the whole watchlist once when you choose.
+- **Resume checkpoints** — interrupted target scans save their progress, counts, filters, and settings for later resumption.
+- **Live terminal dashboard** — checked, available, taken, inappropriate, other/errors, cache hits, worker count, speed, runtime, and target progress update during scans.
+- **TXT + CSV + JSON export** — ranked available results can be exported in all three formats.
+- **Scan statistics** — completion summaries include network checks, cache hits, availability rate, average speed, runtime, and best-ranked result.
+- **Diagnostics** — checks the SQLite database, state path, Roblox connectivity, CSRF token, clipboard helper, and bundled browser-extension folder.
+- **Result browser** — sort available names by score, alphabetically, or digit count before claiming/exporting.
+- **Mutation engine** — provide a seed word and generate/check useful substitutions, leetspeak variants, prefixes, suffixes, and length-normalized mutations.
+- **Excluded-pattern list** — maintain local substring/regex rules that reject unwanted generated names before any network request.
+- **Portable mode** — rename `portable.flag.example` to `portable.flag` beside the EXE. Scanner state and exports then live under a local `data/` directory beside the app.
+- **Update checker** — checks the GitHub Releases API and can open the Releases page when a newer version is available. It never silently self-updates.
+- **Automated tests** — GitHub Actions compiles all v2.5 Python entrypoints and runs the pytest suite before building the Windows EXE.
+
+### Advanced menu
+
+```text
+[s] scan       [a] aesthetic    [g] generate    [m] manual    [w] wordlist
+[x] mutate     [p] presets      [v] watchlist   [r] resume    [c] credentials
+[b] exclusions [d] diagnostics  [u] updates     [q] quit
+```
+
+### Local scanner data
+
+Normal Windows mode stores persistent scanner data under:
+
+```text
+%LOCALAPPDATA%\ScarnsNameSniffer
+```
+
+This contains the SQLite history database, presets, excluded patterns, and resume checkpoint. Passwords for prepared Roblox signup credentials remain handled separately by Windows Credential Manager.
 
 ---
 
