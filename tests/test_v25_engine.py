@@ -152,3 +152,31 @@ def test_history_batch_read_write(tmp_path):
     }
     assert store.summary()["total"] == 3
     store.close()
+
+
+def test_unique_space_generator_is_full_permutation_and_resumable():
+    generator = eng.UniqueSpaceGenerator(
+        ["ab", "01", "xy"],
+        multiplier=3,
+        offset=1,
+    )
+    first = [next(generator) for _ in range(3)]
+    snapshot = generator.snapshot()
+    resumed = eng.UniqueSpaceGenerator.from_snapshot(snapshot)
+    rest = list(resumed)
+
+    combined = first + rest
+    assert len(combined) == 8
+    assert len(set(combined)) == 8
+    assert set(combined) == {
+        a + b + c
+        for a in "ab"
+        for b in "01"
+        for c in "xy"
+    }
+
+
+def test_history_uses_large_sqlite_variable_limit_when_available(tmp_path):
+    store = eng.HistoryStore(tmp_path / "vars.sqlite3")
+    assert store.query_chunk_size >= 800
+    store.close()
