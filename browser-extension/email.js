@@ -42,12 +42,28 @@
     return new Promise(resolve => chrome.storage.local.remove(keys, resolve));
   }
 
-  function sessionGet(defaults) {
-    return new Promise(resolve => chrome.storage.session.get(defaults, resolve));
+  function getPendingSecret(username) {
+    return new Promise(resolve => {
+      chrome.runtime.sendMessage(
+        { type: "scarn:getPendingSecret", username },
+        response => {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(response || { ok: false });
+        }
+      );
+    });
   }
 
-  function sessionRemove(keys) {
-    return new Promise(resolve => chrome.storage.session.remove(keys, resolve));
+  function clearPendingSecret() {
+    return new Promise(resolve => {
+      chrome.runtime.sendMessage(
+        { type: "scarn:clearPendingSecret" },
+        () => resolve()
+      );
+    });
   }
 
   function getAuthenticatedUser() {
@@ -238,7 +254,7 @@
   async function finish(message, good = true) {
     await status(message);
     await localRemove("emailSetupPending");
-    await sessionRemove("pendingSignupSecret");
+    await clearPendingSecret();
     showPanel(message, good);
   }
 
@@ -345,16 +361,9 @@
 
     const passwordInput = findPasswordInput();
     if (passwordInput) {
-      const { pendingSignupSecret } = await sessionGet({
-        pendingSignupSecret: null
-      });
+      const secretResponse = await getPendingSecret(pending.username);
 
-      if (
-        !pendingSignupSecret ||
-        String(pendingSignupSecret.username).toLowerCase() !==
-          String(pending.username).toLowerCase() ||
-        now > Number(pendingSignupSecret.expiresAt || 0)
-      ) {
+      if (!secretResponse?.ok || !secretResponse.secret?.password) {
         await status(
           "Roblox requested the account password, but the temporary signup password is no longer available."
         );
@@ -365,7 +374,7 @@
         return;
       }
 
-      setNativeValue(passwordInput, pendingSignupSecret.password);
+      setNativeValue(passwordInput, secretResponse.secret.password);
     }
 
     let submit = findSubmitButton(emailInput);
@@ -420,7 +429,7 @@
       true
     );
 
-    await sessionRemove("pendingSignupSecret");
+    await clearPendingSecret();
   }
 
   run().catch(async error => {
