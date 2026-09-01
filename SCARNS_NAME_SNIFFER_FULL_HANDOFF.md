@@ -4023,3 +4023,1890 @@ def result_row(username,status,checked_at=None):
     return {"username":username,"status":status,"score":score_username(username),"length":len(username),"checked_at":checked_at or utc_iso()}
 ensure_support_files()
 ~~~~~
+
+
+---
+
+## FILE: `v25_entry.py`
+
+Blob SHA: `78cc23f64321264c99321c76d8544ddba90bb13c`
+
+~~~~~python
+#!/usr/bin/env python3
+"""Scarn's Name Sniffer v2.5 executable entrypoint."""
+
+import webbrowser
+
+import roblox_name_gen as base
+import v25_launcher as launcher
+import v25_scanner as scanner
+
+APP_VER = "2.5"
+base.APP_VER = APP_VER
+launcher.APP_VER = APP_VER
+scanner.APP_VER = APP_VER
+
+
+def open_registration_page_v25(name=None):
+    """Prepare one secure signup handoff and open Roblox Create Account."""
+    if not name:
+        try:
+            webbrowser.open_new_tab(base.ROBLOX_REGISTRATION_URL)
+            print("    Opening Roblox Create Account...")
+        except Exception as exc:
+            print(f"    Could not open browser: {exc}")
+        return
+
+    password = base.generate_account_password()
+    saved = base.save_windows_credential(name, password)
+    payload = base.make_autofill_payload(name, password, saved)
+    copied = base.copy_to_clipboard(payload)
+
+    if saved:
+        print(f"    Saved '{name}' securely in Windows Credential Manager.")
+    else:
+        print("    Warning: Windows Credential Manager save failed.")
+
+    if copied:
+        print("    Prepared one-time autofill handoff for the browser companion.")
+    else:
+        print("    Clipboard handoff failed; browser autofill may need manual input.")
+
+    try:
+        webbrowser.open_new_tab(base.ROBLOX_REGISTRATION_URL)
+        print("    Opening Roblox Create Account...")
+        print("    Companion v2.5 will fill the form and clear the clipboard handoff.")
+        print("    When the form is ready, press Enter to use Roblox's normal Create Account button.")
+    except Exception as exc:
+        print(f"    Could not open browser: {exc}")
+
+
+base.open_registration_page = open_registration_page_v25
+
+
+if __name__ == "__main__":
+    scanner.run_main()
+~~~~~
+
+
+---
+
+## FILE: `v25_fastnet.py`
+
+Blob SHA: `0ea9a4e274fedd9afef5a718a2b0314c64403f17`
+
+~~~~~python
+#!/usr/bin/env python3
+"""High-throughput, rate-limit-respecting Roblox username network helpers."""
+from __future__ import annotations
+
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from typing import Iterable
+
+import requests
+from requests.adapters import HTTPAdapter
+
+BULK_URL = "https://users.roblox.com/v1/usernames/users"
+BULK_BATCH_SIZE = 100
+POOL_SIZE = 64
+BULK_INITIAL_CONCURRENCY = 4
+BULK_MAX_CONCURRENCY = 8
+
+_session = requests.Session()
+_adapter = HTTPAdapter(
+    pool_connections=POOL_SIZE,
+    pool_maxsize=POOL_SIZE,
+    max_retries=0,
+    pool_block=False,
+)
+_session.mount("https://", _adapter)
+_session.headers.update(
+    {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 Chrome/151 Safari/537.36"
+        ),
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+)
+
+
+@dataclass
+class BulkLookupResult:
+    requested: list[str]
+    existing: set[str]
+    ok: bool
+    status_code: int = 0
+    elapsed: float = 0.0
+    retry_after: float | None = None
+    rate_limit: int | None = None
+    rate_remaining: int | None = None
+    rate_reset: float | None = None
+    error: str = ""
+
+
+def chunks(values: Iterable[str], size: int = BULK_BATCH_SIZE):
+    batch = []
+    for value in values:
+        batch.append(value)
+        if len(batch) >= size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+def _number_header(headers, name, cast=float):
+    raw = headers.get(name)
+    if raw is None:
+        return None
+    try:
+        # Some Roblox rate-limit headers can expose comma-separated windows.
+        token = str(raw).split(",", 1)[0].split(";", 1)[0].strip()
+        return cast(float(token))
+    except (TypeError, ValueError):
+        return None
+
+
+def bulk_existing(usernames, timeout=(3.05, 8.0)):
+    """Return usernames that already resolve to Roblox users.
+
+    This is a first-stage existence lookup only. Names not returned by this
+    endpoint still need signup validation because they can be available,
+    inappropriate, reserved, or otherwise invalid.
+    """
+    requested = list(dict.fromkeys(str(n).strip().lower() for n in usernames if n))
+    if not requested:
+        return BulkLookupResult([], set(), True)
+
+    if len(requested) > BULK_BATCH_SIZE:
+        raise ValueError(f"bulk_existing accepts at most {BULK_BATCH_SIZE} usernames")
+
+    started = time.perf_counter()
+    try:
+        response = _session.post(
+            BULK_URL,
+            json={"usernames": requested, "excludeBannedUsers": False},
+            timeout=timeout,
+        )
+        elapsed = time.perf_counter() - started
+        headers = response.headers
+
+        common = dict(
+            requested=requested,
+            status_code=response.status_code,
+            elapsed=elapsed,
+            retry_after=_number_header(headers, "retry-after"),
+            rate_limit=_number_header(headers, "x-ratelimit-limit", int),
+            rate_remaining=_number_header(headers, "x-ratelimit-remaining", int),
+            rate_reset=_number_header(headers, "x-ratelimit-reset"),
+        )
+
+        if response.status_code != 200:
+            return BulkLookupResult(
+                existing=set(),
+                ok=False,
+                error=f"http_{response.status_code}",
+                **common,
+            )
+
+        payload = response.json()
+        existing = set()
+        requested_set = set(requested)
+
+        for item in payload.get("data", []):
+            requested_name = str(item.get("requestedUsername") or "").lower()
+            canonical_name = str(item.get("name") or "").lower()
+
+            if requested_name in requested_set:
+                existing.add(requested_name)
+            elif canonical_name in requested_set:
+                # Compatibility fallback for responses that omit requestedUsername.
+                existing.add(canonical_name)
+
+        return BulkLookupResult(existing=existing, ok=True, **common)
+
+    except requests.RequestException as exc:
+        return BulkLookupResult(
+            requested=requested,
+            existing=set(),
+            ok=False,
+            elapsed=time.perf_counter() - started,
+            error=f"error({exc})",
+        )
+    except (ValueError, TypeError) as exc:
+        return BulkLookupResult(
+            requested=requested,
+            existing=set(),
+            ok=False,
+            elapsed=time.perf_counter() - started,
+            error=f"decode_error({exc})",
+        )
+
+
+
+class BulkConcurrencyController:
+    """AIMD controller for official bulk lookups.
+
+    It increases concurrency after healthy rounds and halves it on 429.
+    Rate-limit headers are used to avoid launching another full round when
+    the server reports that the current quota is exhausted.
+    """
+
+    def __init__(self, workers=BULK_INITIAL_CONCURRENCY, minimum=1, maximum=BULK_MAX_CONCURRENCY):
+        self.minimum = minimum
+        self.maximum = maximum
+        self.workers = max(minimum, min(maximum, int(workers)))
+        self.healthy_streak = 0
+
+    def observe(self, results):
+        results = list(results)
+        if not results:
+            return self.workers
+
+        if any(r.status_code == 429 for r in results):
+            self.workers = max(self.minimum, max(1, self.workers // 2))
+            self.healthy_streak = 0
+            return self.workers
+
+        if any(not r.ok for r in results):
+            self.workers = max(self.minimum, self.workers - 1)
+            self.healthy_streak = 0
+            return self.workers
+
+        self.healthy_streak += 1
+        if self.healthy_streak >= 2:
+            self.workers = min(self.maximum, self.workers + 1)
+            self.healthy_streak = 0
+        return self.workers
+
+    @staticmethod
+    def cooldown_seconds(results):
+        waits = []
+        for result in results:
+            if result.status_code == 429:
+                if result.retry_after is not None:
+                    waits.append(float(result.retry_after))
+                elif result.rate_reset is not None:
+                    waits.append(float(result.rate_reset))
+            elif result.rate_remaining == 0 and result.rate_reset is not None:
+                waits.append(float(result.rate_reset))
+        if not waits:
+            return 0.0
+        return min(60.0, max(0.0, max(waits)))
+
+
+class BulkScheduler:
+    """Persistent bulk worker pool for an entire scan session."""
+
+    def __init__(self, controller=None):
+        self.controller = controller or BulkConcurrencyController()
+        self.executor = None
+        self.closed = False
+        self.submitted_requests = 0
+
+    def _ensure_executor(self):
+        if self.executor is None:
+            self.executor = ThreadPoolExecutor(max_workers=self.controller.maximum)
+        return self.executor
+
+    def iter_lookup_many(self, usernames):
+        """Yield bulk results as soon as each request completes.
+
+        This lets the scanner validate survivors from the first completed
+        batch while sibling bulk requests are still in flight.
+        """
+        batches = list(chunks(usernames))
+        offset = 0
+
+        while offset < len(batches):
+            round_size = self.controller.workers
+            round_batches = batches[offset:offset + round_size]
+            offset += len(round_batches)
+
+            executor = self._ensure_executor()
+            futures = [
+                executor.submit(bulk_existing, batch)
+                for batch in round_batches
+            ]
+            self.submitted_requests += len(futures)
+            round_results = []
+
+            try:
+                for future in as_completed(futures):
+                    result = future.result()
+                    round_results.append(result)
+                    yield result
+            finally:
+                # If the caller reached its target and closes this generator,
+                # avoid starting any queued work that has not begun yet.
+                for future in futures:
+                    if not future.done():
+                        future.cancel()
+
+            self.controller.observe(round_results)
+            cooldown = self.controller.cooldown_seconds(round_results)
+            if cooldown > 0:
+                time.sleep(cooldown)
+
+    def lookup_many(self, usernames):
+        return list(self.iter_lookup_many(usernames))
+
+    def close(self, wait=True):
+        if not self.closed:
+            if self.executor is not None:
+                self.executor.shutdown(wait=wait, cancel_futures=True)
+            self.closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+
+def bulk_existing_many(usernames, controller=None):
+    """Compatibility helper using a temporary scheduler."""
+    scheduler = BulkScheduler(controller)
+    try:
+        return scheduler.lookup_many(usernames), scheduler.controller
+    finally:
+        scheduler.close()
+
+def tune_requests_session(session, pool_size=POOL_SIZE):
+    """Increase requests/urllib3 connection pools for concurrent validators."""
+    adapter = HTTPAdapter(
+        pool_connections=pool_size,
+        pool_maxsize=pool_size,
+        max_retries=0,
+        pool_block=False,
+    )
+    session.mount("https://", adapter)
+    return session
+~~~~~
+
+
+---
+
+## FILE: `v25_launcher.py`
+
+Blob SHA: `e9b2f381d943d0fcb1bcb59a3d55fa4aa712b91a`
+
+~~~~~python
+#!/usr/bin/env python3
+"""Scarn's Name Sniffer v2.5 launcher.
+
+Adds Saved Accounts management on top of the v2.4 scanner while keeping the
+existing generator/checker implementation in roblox_name_gen.py.
+"""
+
+import ctypes
+import os
+import subprocess
+import webbrowser
+from datetime import datetime
+
+import roblox_name_gen as base
+
+APP_VER = "2.5"
+CREDENTIAL_PREFIX = "ScarnsNameSniffer:"
+ROBLOX_LOGIN_URL = "https://www.roblox.com/login"
+
+# Keep version-sensitive messages and credential comments in the imported core
+# aligned with the launcher build.
+base.APP_VER = APP_VER
+
+
+def _credential_types():
+    from ctypes import wintypes
+
+    class FILETIME(ctypes.Structure):
+        _fields_ = [
+            ("dwLowDateTime", wintypes.DWORD),
+            ("dwHighDateTime", wintypes.DWORD),
+        ]
+
+    class CREDENTIALW(ctypes.Structure):
+        _fields_ = [
+            ("Flags", wintypes.DWORD),
+            ("Type", wintypes.DWORD),
+            ("TargetName", wintypes.LPWSTR),
+            ("Comment", wintypes.LPWSTR),
+            ("LastWritten", FILETIME),
+            ("CredentialBlobSize", wintypes.DWORD),
+            ("CredentialBlob", ctypes.c_void_p),
+            ("Persist", wintypes.DWORD),
+            ("AttributeCount", wintypes.DWORD),
+            ("Attributes", ctypes.c_void_p),
+            ("TargetAlias", wintypes.LPWSTR),
+            ("UserName", wintypes.LPWSTR),
+        ]
+
+    return wintypes, CREDENTIALW
+
+
+def list_saved_usernames():
+    """Return Name Sniffer Generic Credentials without exposing passwords."""
+    if os.name != "nt":
+        return []
+    try:
+        wintypes, CREDENTIALW = _credential_types()
+        advapi32 = ctypes.WinDLL("Advapi32.dll", use_last_error=True)
+        enumerate_credentials = advapi32.CredEnumerateW
+        enumerate_credentials.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(ctypes.POINTER(ctypes.POINTER(CREDENTIALW))),
+        ]
+        enumerate_credentials.restype = wintypes.BOOL
+        cred_free = advapi32.CredFree
+        cred_free.argtypes = [ctypes.c_void_p]
+        cred_free.restype = None
+
+        count = wintypes.DWORD(0)
+        credentials = ctypes.POINTER(ctypes.POINTER(CREDENTIALW))()
+        ok = enumerate_credentials(
+            f"{CREDENTIAL_PREFIX}*",
+            0,
+            ctypes.byref(count),
+            ctypes.byref(credentials),
+        )
+        if not ok:
+            return []
+
+        usernames = []
+        try:
+            for i in range(count.value):
+                cred = credentials[i].contents
+                target = cred.TargetName or ""
+                username = cred.UserName or (
+                    target[len(CREDENTIAL_PREFIX):]
+                    if target.startswith(CREDENTIAL_PREFIX)
+                    else target
+                )
+                if username and username not in usernames:
+                    usernames.append(username)
+        finally:
+            cred_free(credentials)
+        return sorted(usernames, key=str.lower)
+    except Exception:
+        return []
+
+
+def read_saved_credential(username):
+    """Return (username, password) for one Name Sniffer credential."""
+    if os.name != "nt":
+        return None
+    try:
+        wintypes, CREDENTIALW = _credential_types()
+        advapi32 = ctypes.WinDLL("Advapi32.dll", use_last_error=True)
+        cred_read = advapi32.CredReadW
+        cred_read.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.POINTER(ctypes.POINTER(CREDENTIALW)),
+        ]
+        cred_read.restype = wintypes.BOOL
+        cred_free = advapi32.CredFree
+        cred_free.argtypes = [ctypes.c_void_p]
+        cred_free.restype = None
+
+        pointer = ctypes.POINTER(CREDENTIALW)()
+        if not cred_read(
+            f"{CREDENTIAL_PREFIX}{username}", 1, 0, ctypes.byref(pointer)
+        ):
+            return None
+
+        try:
+            cred = pointer.contents
+            raw = (
+                ctypes.string_at(cred.CredentialBlob, cred.CredentialBlobSize)
+                if cred.CredentialBlobSize
+                else b""
+            )
+            return cred.UserName or username, raw.decode("utf-16-le")
+        finally:
+            cred_free(pointer)
+    except Exception:
+        return None
+
+
+def delete_saved_credential(username):
+    if os.name != "nt":
+        return False
+    try:
+        wintypes, _ = _credential_types()
+        advapi32 = ctypes.WinDLL("Advapi32.dll", use_last_error=True)
+        cred_delete = advapi32.CredDeleteW
+        cred_delete.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
+        cred_delete.restype = wintypes.BOOL
+        return bool(cred_delete(f"{CREDENTIAL_PREFIX}{username}", 1, 0))
+    except Exception:
+        return False
+
+
+def open_credential_manager():
+    if os.name != "nt":
+        return False
+    try:
+        subprocess.Popen(
+            ["control.exe", "/name", "Microsoft.CredentialManager"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return True
+    except Exception:
+        return False
+
+
+def saved_accounts_mode():
+    print("\n--- Saved Accounts ---")
+    print("Credentials here are saved before signup finishes, so an entry is not proof the Roblox account was successfully created.")
+
+    if os.name != "nt":
+        print("  Saved Accounts is available on Windows only.\n")
+        return
+
+    while True:
+        accounts = list_saved_usernames()
+        print("\n  SAVED CREDENTIALS")
+        print("  " + "-" * 44)
+        if accounts:
+            for i, username in enumerate(accounts, 1):
+                print(f"  [{i:>2}] {username}")
+        else:
+            print("  (none found)")
+
+        choice = input(
+            "\n  Choose account, [o] open Credential Manager, [e] export usernames, or Enter to go back: "
+        ).strip().lower()
+
+        if not choice:
+            return
+        if choice == "o":
+            print(
+                "  Credential Manager opened."
+                if open_credential_manager()
+                else "  Could not open Credential Manager."
+            )
+            continue
+        if choice == "e":
+            if not accounts:
+                print("  No usernames to export.")
+                continue
+            stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            path = os.path.join(base.SAVE_DIR, f"sniffer_saved_usernames_{stamp}.txt")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(accounts) + "\n")
+            print(f"  Exported usernames only, no passwords: {path}")
+            continue
+        if not choice.isdigit() or not (1 <= int(choice) <= len(accounts)):
+            print("  Invalid selection.")
+            continue
+
+        username = accounts[int(choice) - 1]
+        while True:
+            action = input(
+                f"\n  {username}: [u] copy username [p] copy password [r] reveal password "
+                "[l] open login [d] delete [b] back: "
+            ).strip().lower()
+
+            if action in ("", "b"):
+                break
+            if action == "u":
+                print(
+                    "  Username copied."
+                    if base.copy_to_clipboard(username)
+                    else "  Clipboard copy failed."
+                )
+                continue
+            if action in ("p", "r"):
+                credential = read_saved_credential(username)
+                if not credential:
+                    print("  Could not read that credential.")
+                    continue
+                _, password = credential
+                if action == "p":
+                    print(
+                        "  Password copied."
+                        if base.copy_to_clipboard(password)
+                        else "  Clipboard copy failed."
+                    )
+                else:
+                    print(f"  Password: {password}")
+                continue
+            if action == "l":
+                base.copy_to_clipboard(username)
+                try:
+                    webbrowser.open_new_tab(ROBLOX_LOGIN_URL)
+                    print("  Roblox login opened; username copied.")
+                except Exception as exc:
+                    print(f"  Could not open browser: {exc}")
+                continue
+            if action == "d":
+                confirm = input(f"  Type '{username}' to delete this saved credential: ").strip()
+                if confirm != username:
+                    print("  Delete cancelled.")
+                    continue
+                if delete_saved_credential(username):
+                    print("  Deleted from Windows Credential Manager.")
+                    break
+                print("  Delete failed.")
+                continue
+            print("  Choose u, p, r, l, d, or b.")
+
+
+def run_main():
+    try:
+        print(f"{base.APP_NAME} v{APP_VER}".center(55))
+        print("(Roblox username generator + availability checker)".center(55))
+        print()
+        print("Fetching CSRF token...", end=" ")
+        tok = base.get_csrf_token()
+        print(f"{'OK' if tok else 'FAILED'}\n")
+
+        mode = input(
+            "Mode: [s]can [g]enerate [a]esthetic-only [m]anual [w]ordlist [c]redentials? "
+        ).strip().lower()
+
+        if mode == "c":
+            saved_accounts_mode()
+
+        elif mode == "m":
+            base.manual_lookup_mode()
+
+        elif mode == "w":
+            base.wordlist_mode(base.pick_length())
+
+        elif mode == "a":
+            length = base.pick_length()
+            target = int(input("How many aesthetic names to find? ") or "5")
+            max_c = int(input("Max checks? ") or "500")
+            found, total = [], 0
+            with base.ThreadPoolExecutor(max_workers=base.MAX_WORKERS) as ex:
+                while len(found) < target and total < max_c:
+                    bs = min(base.MAX_WORKERS, max_c - total)
+                    names = [base.generate_aesthetic(length) for _ in range(bs)]
+                    for future in base.as_completed({ex.submit(base.smart_check, n): n for n in names}):
+                        n, status = future.result()
+                        total += 1
+                        if status == "available":
+                            found.append(n)
+                        base.p_prog(n, status, len(found), total)
+                    base.time.sleep(base.REQUEST_DELAY)
+            print(f"\n\n{'=' * 55}")
+            print(f"  AESTHETIC AVAILABLE ({length} chars): {len(found)}")
+            print(f"{'=' * 55}")
+            for n in found:
+                base.print_available(n)
+            if found:
+                base.claim_available_name(found)
+                ans2 = input("  Save to desktop? [Y/n]: ").strip().lower()
+                if ans2 != "n":
+                    base.save_results(found, f"aesthetic-{length}char")
+            print("\n--- made by scarn ---\n")
+
+        elif mode == "s":
+            length = base.pick_length()
+            target = int(input("How many names to find? ") or "5")
+            print("Charset options:")
+            print("  [L] Letters only (a-z)")
+            print("  [M] Mixed letters+digits (default)")
+            print("  [N] Numbers only (0-9)")
+            cs_in = input("Choose: ").strip().lower()
+            if cs_in == "l":
+                charset = base.LETTERS
+            elif cs_in == "n":
+                charset = base.NUMBERS_ONLY
+            else:
+                charset = base.CHARSET
+            max_c = int(input("Max checks? ") or "500")
+            found, total = [], 0
+            with base.ThreadPoolExecutor(max_workers=base.MAX_WORKERS) as ex:
+                while len(found) < target and total < max_c:
+                    bs = min(base.MAX_WORKERS, max_c - total)
+                    names = [base.generate_random(length, charset) for _ in range(bs)]
+                    for future in base.as_completed({ex.submit(base.smart_check, n): n for n in names}):
+                        n, status = future.result()
+                        total += 1
+                        if status == "available":
+                            found.append(n)
+                        base.p_prog(n, status, len(found), total)
+                    base.time.sleep(base.REQUEST_DELAY)
+            print(f"\n\n{'=' * 55}")
+            print(f"  SCAN DONE - Checked {total}, found {len(found)} available ({length} chars)")
+            print(f"{'=' * 55}")
+            for n in found:
+                base.print_available(n)
+            if not found:
+                print("    (none found)")
+            if found:
+                base.claim_available_name(found)
+                ans2 = input("  Save to desktop? [Y/n]: ").strip().lower()
+                if ans2 != "n":
+                    base.save_results(found, f"scan-{length}char")
+            print("\n--- made by scarn ---\n")
+
+        else:
+            length = base.pick_length()
+            batch = int(input("How many names? ") or "100")
+            aesthetic = input("Aesthetic/word-like? [y/N]: ").strip().lower() == "y"
+            print("Charset options:")
+            print("  [L] Letters only (a-z)")
+            print("  [M] Mixed letters+digits (default)")
+            print("  [N] Numbers only (0-9)")
+            cs_in = input("Choose: ").strip().lower()
+            if cs_in == "l":
+                charset = base.LETTERS
+            elif cs_in == "n":
+                charset = base.NUMBERS_ONLY
+            else:
+                charset = base.CHARSET
+
+            names = [
+                base.generate_aesthetic(length)
+                if aesthetic
+                else base.generate_random(length, charset)
+                for _ in range(batch)
+            ]
+            results = []
+            with base.ThreadPoolExecutor(max_workers=base.MAX_WORKERS) as ex:
+                for i, future in enumerate(
+                    base.as_completed({ex.submit(base.smart_check, n): n for n in names})
+                ):
+                    results.append(future.result())
+                    n, status = results[-1]
+                    base.p_prog(
+                        n,
+                        status,
+                        len([r for r in results if r[1] == "available"]),
+                        i + 1,
+                    )
+                    if (i + 1) % base.MAX_WORKERS == 0:
+                        base.time.sleep(base.REQUEST_DELAY)
+
+            available = [n for n, status in results if status == "available"]
+            aesthetic_names = [n for n in available if base.is_aesthetic(n)]
+            random_names = [n for n in available if not base.is_aesthetic(n)]
+            print(f"\n\n{'=' * 55}")
+            print(f"  RESULTS ({length} chars) - Available: {len(available)}/{batch}")
+            print(f"{'=' * 55}")
+            if aesthetic_names:
+                print(f"\n  AESTHETIC ({len(aesthetic_names)}):")
+                for n in aesthetic_names:
+                    base.print_available(n, f"({base.is_wordlike(n)}/10)")
+            if random_names:
+                print(f"\n  RANDOM ({len(random_names)}):")
+                for n in random_names:
+                    base.print_available(n)
+            print(f"\n  TAKEN: {len([r for r in results if r[1] == 'taken'])}")
+            other = [r for r in results if r[1] not in ("available", "taken")]
+            if other:
+                print("  OTHER:")
+                for status, count in base.Counter(status for _, status in other).most_common(5):
+                    print(f"    {status}: {count}")
+            if available:
+                base.claim_available_name(available)
+                ans2 = input("  Save to desktop? [Y/n]: ").strip().lower()
+                if ans2 != "n":
+                    base.save_results(available, f"batch-{length}char")
+            print("\n--- made by scarn ---\n")
+
+        input("Press Enter to exit...")
+
+    except KeyboardInterrupt:
+        print("\n\nExiting.")
+        print("--- made by scarn ---")
+        input("Press Enter to exit...")
+
+
+if __name__ == "__main__":
+    run_main()
+~~~~~
+
+
+---
+
+## FILE: `v25_scanner.py`
+
+Blob SHA: `f1fa26d55cd28a43db0c184e899f1de78e0439bc`
+
+~~~~~python
+#!/usr/bin/env python3
+"""Scarn's Name Sniffer v2.5 advanced scanner UI."""
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+import time
+import webbrowser
+from collections import Counter, deque
+from pathlib import Path
+
+import requests
+
+import roblox_name_gen as base
+import v25_engine as eng
+import v25_fastnet as fastnet
+import v25_launcher as accounts
+
+APP_VER = "2.5"
+base.APP_VER = APP_VER
+accounts.APP_VER = APP_VER
+
+_recent_available = deque(maxlen=6)
+_last_dashboard_at = 0.0
+DASHBOARD_INTERVAL = 0.25
+TURBO_CANDIDATE_BATCH = fastnet.BULK_BATCH_SIZE
+TURBO_WINDOW_SIZE = 1000
+CHECKPOINT_INTERVAL = 2.0
+CHECKPOINT_EVERY = 5000
+
+# The legacy validator uses requests.Session. Its default pool is only 10,
+# which becomes a hidden bottleneck once adaptive concurrency climbs higher.
+fastnet.tune_requests_session(base.SESH)
+
+
+def yesno(prompt, default=False):
+    suffix = " [Y/n]: " if default else " [y/N]: "
+    value = input(prompt + suffix).strip().lower()
+    if not value:
+        return default
+    return value in {"y", "yes"}
+
+
+def choose_charset_mode():
+    print("Charset: [L] letters  [M] letters+digits  [N] numbers  [U] letters+digits+underscore")
+    choice = input("Choose [M]: ").strip().lower()
+    return choice if choice in {"l", "n", "u"} else "m"
+
+
+def charset_for(mode, filters):
+    if mode == "l":
+        chars = base.LETTERS
+    elif mode == "n":
+        chars = base.NUMBERS_ONLY
+    elif mode == "u":
+        chars = base.CHARSET + "_"
+    else:
+        chars = base.CHARSET
+    if not filters.allow_digits:
+        chars = "".join(c for c in chars if not c.isdigit())
+    if not filters.allow_underscores:
+        chars = chars.replace("_", "")
+    return chars or base.LETTERS
+
+
+
+def build_unique_generator(length, chars, filters, resume_state=None):
+    """Build a duplicate-free normal-scan generator.
+
+    Cheap structural constraints are encoded directly into per-position
+    alphabets so invalid shapes never enter the scan pipeline.
+    """
+    if resume_state:
+        return eng.UniqueSpaceGenerator.from_snapshot(resume_state)
+
+    first = chars
+    if filters.must_start_letter:
+        first = "".join(c for c in chars if c.isalpha()) or base.LETTERS
+
+    middle = chars
+    last = chars
+
+    # Roblox usernames cannot use a leading/trailing underscore in normal
+    # signup validation, so avoid generating those shapes entirely.
+    first = first.replace("_", "")
+    last = last.replace("_", "")
+
+    alphabets = [first]
+    if length > 2:
+        alphabets.extend([middle] * (length - 2))
+    if length > 1:
+        alphabets.append(last)
+    return eng.UniqueSpaceGenerator(alphabets)
+
+def configure_filters(seed=None):
+    cfg = eng.FilterConfig.from_dict(seed)
+    print("\nAdvanced filters (Enter keeps the shown default)")
+    cfg.allow_digits = yesno("Allow digits?", cfg.allow_digits)
+    cfg.allow_underscores = yesno("Allow underscores?", cfg.allow_underscores)
+    if cfg.allow_digits:
+        raw = input(f"Max digits [{cfg.max_digits if cfg.max_digits < 99 else 'any'}]: ").strip()
+        if raw.isdigit():
+            cfg.max_digits = max(0, int(raw))
+    else:
+        cfg.max_digits = 0
+    cfg.must_start_letter = yesno("Must start with a letter?", cfg.must_start_letter)
+    cfg.must_contain_vowel = yesno("Must contain a vowel?", cfg.must_contain_vowel)
+    cfg.avoid_repeats = yesno("Avoid adjacent repeated characters?", cfg.avoid_repeats)
+    return cfg
+
+
+def dashboard(stats, adaptive, target, found, mode, current="", cache_note="", force=False):
+    global _last_dashboard_at
+    now = time.perf_counter()
+    if not force and now - _last_dashboard_at < DASHBOARD_INTERVAL:
+        return
+    _last_dashboard_at = now
+    elapsed = eng.format_duration(stats.elapsed)
+    line = (
+        f"[{mode}] checked:{stats.checked}  available:{stats.available}  taken:{stats.taken}  "
+        f"inappropriate:{stats.inappropriate}  other:{stats.other}  cache:{stats.cache_hits}  "
+        f"http:{stats.http_requests}  bulk:{stats.bulk_requests}  validators:{stats.individual_validations}  "
+        f"workers:{adaptive.workers}  speed:{stats.speed:.1f}/s  time:{elapsed}  target:{len(found)}/{target}"
+    )
+    if current:
+        line += f"  | {current}"
+    if cache_note:
+        line += f" {cache_note}"
+    sys.stdout.write("\r" + " " * 175 + "\r" + line[:174])
+    sys.stdout.flush()
+
+def print_available_live(name):
+    _recent_available.appendleft(name)
+    sys.stdout.write("\r" + " " * 155 + "\r")
+    score = eng.score_username(name)
+    print(f"  >>> AVAILABLE  {name:<12} score {score:>3}/100 {eng.score_label(score)}")
+
+
+def generate_unique(count, generator, filters, banned, seen=None, source_unique=False):
+    out = []
+    attempts = 0
+    max_attempts = max(200, count * 80)
+    if seen is None:
+        seen = set()
+    while len(out) < count and attempts < max_attempts:
+        attempts += 1
+        try:
+            name = generator().lower()
+        except StopIteration:
+            break
+        if not source_unique:
+            if name in seen:
+                continue
+            seen.add(name)
+        if eng.passes_filters(name, filters, banned):
+            out.append(name)
+    return out
+
+
+def check_candidates(
+    candidates,
+    store,
+    stats,
+    adaptive,
+    mode,
+    target=None,
+    found=None,
+    stop_after_available=None,
+    bulk_controller=None,
+    bulk_scheduler=None,
+    validator_executor=None,
+    collect_rows=True,
+    candidates_unique=False,
+):
+    """Pipeline cache -> streaming bulk lookup -> immediate survivor validation."""
+    results = []
+    found = found if found is not None else []
+    bulk_controller = bulk_controller or fastnet.BulkConcurrencyController()
+
+    owns_bulk_scheduler = bulk_scheduler is None
+    scheduler = bulk_scheduler or fastnet.BulkScheduler(bulk_controller)
+    bulk_controller = scheduler.controller
+
+    if candidates_unique:
+        candidates = [name.lower() for name in candidates]
+    else:
+        candidates = list(dict.fromkeys(name.lower() for name in candidates))
+    if not candidates:
+        if owns_bulk_scheduler:
+            scheduler.close()
+        return results
+
+    cached_map = store.cached_status_many(candidates)
+    uncached = [name for name in candidates if name not in cached_map]
+
+    if cached_map:
+        counts = Counter(cached_map.values())
+        stats.checked += len(cached_map)
+        stats.cache_hits += len(cached_map)
+        stats.available += counts.get("available", 0)
+        stats.taken += counts.get("taken", 0)
+        stats.inappropriate += counts.get("inappropriate", 0)
+        stats.other += (
+            len(cached_map)
+            - counts.get("available", 0)
+            - counts.get("taken", 0)
+            - counts.get("inappropriate", 0)
+        )
+
+        for name, cached in cached_map.items():
+            if collect_rows:
+                score = eng.score_username(name) if cached == "available" else 0
+                results.append(
+                    {
+                        "username": name,
+                        "status": cached,
+                        "score": score,
+                        "length": len(name),
+                        "checked_at": eng.utc_iso(),
+                    }
+                )
+            if cached == "available" and name not in found:
+                found.append(name)
+                print_available_live(name)
+
+        dashboard(
+            stats,
+            adaptive,
+            target or len(candidates),
+            found,
+            mode,
+            f"{len(cached_map)} cache hits",
+            "[one DB query]",
+            force=True,
+        )
+
+    if stop_after_available is not None and len(found) >= stop_after_available:
+        if owns_bulk_scheduler:
+            scheduler.close(wait=False)
+        return results
+    if not uncached:
+        if owns_bulk_scheduler:
+            scheduler.close()
+        return results
+
+    owns_validator_executor = validator_executor is None
+    executor = validator_executor or base.ThreadPoolExecutor(max_workers=adaptive.maximum)
+
+    pending_records = []
+    validation_records = []
+    bulk_status_signals = []
+    bulk_taken_total = 0
+    bulk_survivor_total = 0
+
+    def validate_names(names):
+        """Validate one bulk result's survivors immediately."""
+        nonlocal validation_records
+        offset = 0
+
+        while offset < len(names):
+            if stop_after_available is not None and len(found) >= stop_after_available:
+                return True
+
+            wave_size = min(adaptive.workers, len(names) - offset)
+            wave = names[offset:offset + wave_size]
+            offset += wave_size
+
+            futures = {executor.submit(base.smart_check, name): name for name in wave}
+            wave_statuses = []
+
+            for future in base.as_completed(futures):
+                name = futures[future]
+                try:
+                    _, status = future.result()
+                except Exception as exc:
+                    status = f"error({exc})"
+
+                stats.http_requests += 1
+                stats.individual_validations += 1
+                stats.record(status, cached=False)
+                wave_statuses.append(status)
+
+                score = eng.score_username(name) if status == "available" else 0
+                validation_records.append((name, status, score, mode))
+
+                if collect_rows:
+                    results.append(
+                        {
+                            "username": name,
+                            "status": status,
+                            "score": score,
+                            "length": len(name),
+                            "checked_at": eng.utc_iso(),
+                        }
+                    )
+
+                if status == "available" and name not in found:
+                    found.append(name)
+                    print_available_live(name)
+
+                dashboard(
+                    stats,
+                    adaptive,
+                    target or len(candidates),
+                    found,
+                    mode,
+                    name,
+                )
+
+            before = adaptive.workers
+            adaptive.observe(wave_statuses + bulk_status_signals)
+
+            if "ratelimited" in wave_statuses:
+                print("\n  Signup validator rate-limited. Cooling down before continuing.")
+                time.sleep(2.0)
+            elif adaptive.workers < before:
+                time.sleep(0.15)
+
+        return stop_after_available is not None and len(found) >= stop_after_available
+
+    submitted_before = scheduler.submitted_requests
+    submitted_accounted = submitted_before
+    lookup_iter = scheduler.iter_lookup_many(uncached)
+
+    try:
+        for lookup in lookup_iter:
+            # iter_lookup_many submits a whole concurrency round before yielding
+            # its first result. Count every launched request, including siblings
+            # that are still in flight while this result is being validated.
+            if scheduler.submitted_requests > submitted_accounted:
+                launched = scheduler.submitted_requests - submitted_accounted
+                stats.bulk_requests += launched
+                stats.http_requests += launched
+                submitted_accounted = scheduler.submitted_requests
+
+            chunk = lookup.requested
+
+            if lookup.ok:
+                existing = lookup.existing
+                taken_count = len(existing)
+
+                if taken_count:
+                    stats.checked += taken_count
+                    stats.network_checks += taken_count
+                    stats.taken += taken_count
+                    stats.bulk_resolved += taken_count
+                    pending_records.extend((name, "taken", 0, mode) for name in existing)
+
+                    if collect_rows:
+                        checked_at = eng.utc_iso()
+                        results.extend(
+                            {
+                                "username": name,
+                                "status": "taken",
+                                "score": 0,
+                                "length": len(name),
+                                "checked_at": checked_at,
+                            }
+                            for name in existing
+                        )
+
+                survivors = [name for name in chunk if name not in existing]
+                bulk_taken_total += taken_count
+                bulk_survivor_total += len(survivors)
+
+            else:
+                # Bulk failures fall through to the signup validator so the
+                # result remains correct. The bulk scheduler itself handles
+                # server-directed cooldown before launching another round.
+                survivors = list(chunk)
+                bulk_status_signals.append(
+                    "ratelimited"
+                    if lookup.status_code == 429
+                    else (lookup.error or "bulk_error")
+                )
+
+            # Critical latency optimization: do not wait for sibling bulk
+            # requests. They continue in the bulk executor while these
+            # survivors are validated right now.
+            if survivors and validate_names(survivors):
+                break
+
+    finally:
+        # Closing the generator cancels bulk futures that have not started.
+        try:
+            lookup_iter.close()
+        except Exception:
+            pass
+
+        if scheduler.submitted_requests > submitted_accounted:
+            launched = scheduler.submitted_requests - submitted_accounted
+            stats.bulk_requests += launched
+            stats.http_requests += launched
+
+        if owns_validator_executor:
+            executor.shutdown(wait=True, cancel_futures=True)
+
+        if owns_bulk_scheduler:
+            scheduler.close(
+                wait=not (
+                    stop_after_available is not None
+                    and len(found) >= stop_after_available
+                )
+            )
+
+    all_records = pending_records + validation_records
+    if all_records:
+        store.record_many(all_records)
+
+    dashboard(
+        stats,
+        adaptive,
+        target or len(candidates),
+        found,
+        mode,
+        f"pipeline: {bulk_taken_total} bulk-taken / {bulk_survivor_total} survivors",
+        f"[bulk x{bulk_controller.workers}]",
+        force=True,
+    )
+    return results
+
+def checkpoint_payload(
+    mode,
+    length,
+    target,
+    max_checks,
+    found,
+    stats,
+    filters,
+    charset_mode,
+    aesthetic,
+    generator_state=None,
+):
+    return {
+        "mode": mode,
+        "length": length,
+        "target": target,
+        "max_checks": max_checks,
+        "found": list(found),
+        "checked": stats.checked,
+        "network_checks": stats.network_checks,
+        "cache_hits": stats.cache_hits,
+        "available": stats.available,
+        "taken": stats.taken,
+        "inappropriate": stats.inappropriate,
+        "other": stats.other,
+        "http_requests": stats.http_requests,
+        "bulk_requests": stats.bulk_requests,
+        "bulk_resolved": stats.bulk_resolved,
+        "individual_validations": stats.individual_validations,
+        "elapsed": stats.elapsed,
+        "filters": vars(filters),
+        "charset_mode": charset_mode,
+        "aesthetic": bool(aesthetic),
+        "generator_state": generator_state,
+    }
+
+def run_target_scan(length, target, max_checks, filters, charset_mode="m", aesthetic=False, resume=None, label="scan"):
+    store = eng.HistoryStore()
+    banned = eng.load_banned_patterns()
+    adaptive = eng.AdaptiveWorkers()
+    bulk_controller = fastnet.BulkConcurrencyController()
+    bulk_scheduler = fastnet.BulkScheduler(bulk_controller)
+    validator_executor = base.ThreadPoolExecutor(max_workers=adaptive.maximum)
+    resume = resume or {}
+
+    stats = eng.ScanStats(time.time() - float(resume.get("elapsed", 0)))
+    found = list(resume.get("found", []))
+    stats.checked = int(resume.get("checked", 0))
+    stats.network_checks = int(resume.get("network_checks", 0))
+    stats.cache_hits = int(resume.get("cache_hits", 0))
+    stats.available = int(resume.get("available", len(found)))
+    stats.taken = int(resume.get("taken", 0))
+    stats.inappropriate = int(resume.get("inappropriate", 0))
+    stats.other = int(resume.get("other", 0))
+    stats.http_requests = int(resume.get("http_requests", 0))
+    stats.bulk_requests = int(resume.get("bulk_requests", 0))
+    stats.bulk_resolved = int(resume.get("bulk_resolved", 0))
+    stats.individual_validations = int(resume.get("individual_validations", 0))
+
+    seen = set(found)
+    chars = charset_for(charset_mode, filters)
+
+    if aesthetic:
+        source = None
+        generator = lambda: base.generate_aesthetic(length)
+    else:
+        source = build_unique_generator(
+            length,
+            chars,
+            filters,
+            resume_state=resume.get("generator_state"),
+        )
+        generator = source.__next__
+
+    print(f"\nStarting MAX-SPEED {label}. Cache: {eng.db_path()}")
+    print(
+        f"Window: up to {TURBO_WINDOW_SIZE} candidates | bulk request: {TURBO_CANDIDATE_BATCH} names | "
+        f"bulk concurrency: {bulk_controller.workers}->{bulk_controller.maximum}"
+    )
+    print(
+        f"Survivor validators: {adaptive.workers}->{adaptive.maximum} workers | "
+        "429 responses reduce concurrency and trigger cooldowns.\n"
+    )
+
+    last_checkpoint_at = time.monotonic()
+    last_checkpoint_checked = stats.checked
+
+    def checkpoint(force=False):
+        nonlocal last_checkpoint_at, last_checkpoint_checked
+        now = time.monotonic()
+        if not force:
+            if (
+                now - last_checkpoint_at < CHECKPOINT_INTERVAL
+                and stats.checked - last_checkpoint_checked < CHECKPOINT_EVERY
+            ):
+                return
+        generator_state = source.snapshot() if source is not None else None
+        eng.save_checkpoint(
+            checkpoint_payload(
+                label,
+                length,
+                target,
+                max_checks,
+                found,
+                stats,
+                filters,
+                charset_mode,
+                aesthetic,
+                generator_state,
+            )
+        )
+        last_checkpoint_at = now
+        last_checkpoint_checked = stats.checked
+
+    try:
+        while len(found) < target and stats.checked < max_checks:
+            batch_size = min(TURBO_WINDOW_SIZE, max_checks - stats.checked)
+            candidates = generate_unique(
+                batch_size,
+                generator,
+                filters,
+                banned,
+                seen if aesthetic else None,
+                source_unique=not aesthetic,
+            )
+            if not candidates:
+                print("\nUsername space exhausted or no more candidates passed the filters.")
+                break
+
+            check_candidates(
+                candidates,
+                store,
+                stats,
+                adaptive,
+                label,
+                target,
+                found,
+                stop_after_available=target,
+                bulk_controller=bulk_controller,
+                bulk_scheduler=bulk_scheduler,
+                validator_executor=validator_executor,
+                collect_rows=False,
+                candidates_unique=not aesthetic,
+            )
+            checkpoint(False)
+
+    except KeyboardInterrupt:
+        print("\n\nScan interrupted. Resume checkpoint saved.")
+        checkpoint(True)
+        store.close()
+        return
+    finally:
+        bulk_scheduler.close(wait=not (len(found) >= target))
+        validator_executor.shutdown(wait=True, cancel_futures=True)
+
+    eng.clear_checkpoint()
+    store.close()
+    finish_scan([], found, stats, label)
+
+def finish_scan(rows, found, stats, label):
+    print("\n\n" + "=" * 78)
+    print(f"{label.upper()} COMPLETE")
+    print("=" * 78)
+    print(f"Usernames classified: {stats.checked}")
+    print(f"Cache hits:           {stats.cache_hits}")
+    print(f"Network usernames:    {stats.network_checks}")
+    print(f"Actual HTTP requests: {stats.http_requests}")
+    print(f"Bulk lookup requests: {stats.bulk_requests}")
+    print(f"Resolved by bulk:     {stats.bulk_resolved}")
+    print(f"Individual validators:{stats.individual_validations:>10}")
+    print(f"Available users:      {stats.available}")
+    print(f"Taken users:          {stats.taken}")
+    print(f"Inappropriate:        {stats.inappropriate}")
+    print(f"Other/errors:         {stats.other}")
+    print(f"Availability rate:    {(stats.available / max(1, stats.checked)) * 100:.2f}%")
+    print(f"Average throughput:   {stats.speed:.1f} usernames/s")
+    if stats.http_requests:
+        print(f"Effective density:    {stats.network_checks / stats.http_requests:.1f} usernames/HTTP request")
+    print(f"Runtime:              {eng.format_duration(stats.elapsed)}")
+    if found:
+        ranked = sorted(found, key=lambda n: (-eng.score_username(n), n))
+        print(f"Best result:          {ranked[0]} ({eng.score_username(ranked[0])}/100)")
+        browse_results(ranked)
+    else:
+        print("\nNo available names found.")
+
+def browse_results(names):
+    order = list(dict.fromkeys(names))
+    while order:
+        print("\nAVAILABLE RESULT BROWSER")
+        print("-" * 74)
+        for i, name in enumerate(order[:60], 1):
+            score = eng.score_username(name)
+            print(f"[{i:>2}] {name:<14} score {score:>3}/100  {eng.score_label(score):<10} digits:{sum(c.isdigit() for c in name)}")
+        if len(order) > 60:
+            print(f"... {len(order)-60} more results not shown")
+        choice = input("\n[s] score  [a] alphabetical  [d] digit count  [c] claim  [e] export TXT/CSV/JSON  [Enter] back: ").strip().lower()
+        if not choice:
+            return
+        if choice == "s":
+            order.sort(key=lambda n: (-eng.score_username(n), n))
+        elif choice == "a":
+            order.sort()
+        elif choice == "d":
+            order.sort(key=lambda n: (sum(c.isdigit() for c in n), -eng.score_username(n), n))
+        elif choice == "c":
+            base.claim_available_name(order)
+        elif choice == "e":
+            rows = [eng.result_row(n, "available") for n in order]
+            paths = eng.export_results(rows, "available")
+            print("Exported:")
+            for kind, path in paths.items():
+                print(f"  {kind.upper()}: {path}")
+
+
+def maybe_save_preset(length, target, max_checks, aesthetic, filters):
+    if not yesno("Save these settings as a preset?", False):
+        return
+    name = input("Preset name: ").strip().lower().replace(" ", "-")
+    if not name:
+        return
+    presets = eng.load_presets()
+    presets[name] = {
+        "description": input("Short description: ").strip() or "Custom preset",
+        "length": length,
+        "target": target,
+        "max_checks": max_checks,
+        "aesthetic": aesthetic,
+        "filters": vars(filters),
+    }
+    eng.save_presets(presets)
+    print(f"Saved preset '{name}'.")
+
+
+def scan_mode(aesthetic=False):
+    length = base.pick_length()
+    target = max(1, int(input("How many available names to find? ") or "10"))
+    max_checks = max(target, int(input("Max checks? ") or "1000"))
+    filters = configure_filters({"must_contain_vowel": aesthetic, "allow_digits": not aesthetic, "max_digits": 1 if not aesthetic else 0})
+    charset_mode = "l" if aesthetic and not filters.allow_digits else choose_charset_mode()
+    maybe_save_preset(length, target, max_checks, aesthetic, filters)
+    run_target_scan(length, target, max_checks, filters, charset_mode, aesthetic, label="aesthetic" if aesthetic else "scan")
+
+
+def generate_mode():
+    length = base.pick_length()
+    count = max(1, int(input("How many names to check? ") or "100"))
+    aesthetic = yesno("Aesthetic/word-like generation?", False)
+    filters = configure_filters({"must_contain_vowel": aesthetic})
+    charset_mode = choose_charset_mode()
+    chars = charset_for(charset_mode, filters)
+    if aesthetic:
+        generator = lambda: base.generate_aesthetic(length)
+    else:
+        generator = build_unique_generator(length, chars, filters).__next__
+    banned = eng.load_banned_patterns()
+    names = generate_unique(
+        count,
+        generator,
+        filters,
+        banned,
+        set() if aesthetic else None,
+        source_unique=not aesthetic,
+    )
+    store = eng.HistoryStore()
+    stats = eng.ScanStats(time.time())
+    adaptive = eng.AdaptiveWorkers()
+    bulk_controller = fastnet.BulkConcurrencyController()
+    bulk_scheduler = fastnet.BulkScheduler(bulk_controller)
+    validator_executor = base.ThreadPoolExecutor(max_workers=adaptive.maximum)
+    found = []
+    offset = 0
+    try:
+        while offset < len(names):
+            size = TURBO_WINDOW_SIZE
+            check_candidates(
+                names[offset:offset+size], store, stats, adaptive, "generate",
+                len(names), found, bulk_controller=bulk_controller,
+                bulk_scheduler=bulk_scheduler,
+                validator_executor=validator_executor,
+                collect_rows=False,
+                candidates_unique=True,
+            )
+            offset += size
+    finally:
+        bulk_scheduler.close()
+        validator_executor.shutdown(wait=True, cancel_futures=True)
+    store.close()
+    finish_scan([], found, stats, "generate")
+
+
+def manual_mode():
+    store = eng.HistoryStore()
+    print("\nManual lookup. Type 'done' to return.")
+    while True:
+        name = input("Check name: ").strip().lower()
+        if not name or name == "done":
+            break
+        cached = store.cached_status(name)
+        if cached is not None:
+            status, suffix = cached, " (cached)"
+        else:
+            _, status = base.smart_check(name)
+            store.record(name, status, eng.score_username(name), "manual")
+            suffix = ""
+        print(f"  {name}: {status.upper()}{suffix} | score {eng.score_username(name)}/100")
+        if status == "available" and yesno("Add to watchlist?", False):
+            store.add_watch(name)
+    store.close()
+
+
+def wordlist_mode():
+    path = input("Path to wordlist file: ").strip().replace('"', "")
+    p = Path(path)
+    if not p.exists():
+        print("File not found.")
+        return
+    length = base.pick_length()
+    filters = configure_filters()
+    banned = eng.load_banned_patterns()
+    words = [x.strip() for x in p.read_text(encoding="utf-8", errors="ignore").splitlines() if x.strip()]
+    candidates, seen = [], set()
+    for word in words:
+        name = base.generate_from_word(word, length)
+        if name and name not in seen and eng.passes_filters(name, filters, banned):
+            seen.add(name)
+            candidates.append(name)
+    store = eng.HistoryStore()
+    stats = eng.ScanStats(time.time())
+    adaptive = eng.AdaptiveWorkers()
+    bulk_controller = fastnet.BulkConcurrencyController()
+    bulk_scheduler = fastnet.BulkScheduler(bulk_controller)
+    validator_executor = base.ThreadPoolExecutor(max_workers=adaptive.maximum)
+    found = []
+    offset = 0
+    try:
+        while offset < len(candidates):
+            size = TURBO_WINDOW_SIZE
+            check_candidates(
+                candidates[offset:offset+size], store, stats, adaptive, "wordlist",
+                len(candidates), found, bulk_controller=bulk_controller,
+                bulk_scheduler=bulk_scheduler,
+                validator_executor=validator_executor,
+                collect_rows=False,
+                candidates_unique=True,
+            )
+            offset += size
+    finally:
+        bulk_scheduler.close()
+        validator_executor.shutdown(wait=True, cancel_futures=True)
+    store.close()
+    finish_scan([], found, stats, "wordlist")
+
+
+def mutation_mode():
+    word = input("Base word/name: ").strip()
+    if not word:
+        return
+    raw = input("Target length [4/5/6 or Enter = flexible]: ").strip()
+    length = int(raw) if raw in {"4", "5", "6"} else None
+    limit = max(1, min(500, int(input("Max mutations to check [100]: ") or "100")))
+    filters = configure_filters()
+    banned = eng.load_banned_patterns()
+    candidates = [n for n in eng.mutate_word(word, length, limit * 3) if eng.passes_filters(n, filters, banned)][:limit]
+    print(f"Generated {len(candidates)} filtered mutations.")
+    store = eng.HistoryStore()
+    stats = eng.ScanStats(time.time())
+    adaptive = eng.AdaptiveWorkers()
+    bulk_controller = fastnet.BulkConcurrencyController()
+    bulk_scheduler = fastnet.BulkScheduler(bulk_controller)
+    validator_executor = base.ThreadPoolExecutor(max_workers=adaptive.maximum)
+    found = []
+    offset = 0
+    try:
+        while offset < len(candidates):
+            size = TURBO_WINDOW_SIZE
+            check_candidates(
+                candidates[offset:offset+size], store, stats, adaptive, "mutation",
+                len(candidates), found, bulk_controller=bulk_controller,
+                bulk_scheduler=bulk_scheduler,
+                validator_executor=validator_executor,
+                collect_rows=False,
+                candidates_unique=True,
+            )
+            offset += size
+    finally:
+        bulk_scheduler.close()
+        validator_executor.shutdown(wait=True, cancel_futures=True)
+    store.close()
+    finish_scan([], found, stats, "mutation")
+
+
+def watchlist_mode():
+    store = eng.HistoryStore()
+    while True:
+        items = store.watch_items()
+        print("\nWATCHLIST\n" + "-" * 60)
+        if items:
+            for i, row in enumerate(items, 1):
+                print(f"[{i:>2}] {row['username']:<16} {row['status'] or 'never checked':<16} score:{row['score'] or 0}")
+        else:
+            print("(empty)")
+        choice = input("\n[a] add  [r] remove  [c] recheck all once  [Enter] back: ").strip().lower()
+        if not choice:
+            break
+        if choice == "a":
+            name = input("Username: ").strip().lower()
+            if name:
+                store.add_watch(name, input("Note (optional): ").strip())
+        elif choice == "r":
+            store.remove_watch(input("Username to remove: ").strip().lower())
+        elif choice == "c":
+            for row in list(store.watch_items()):
+                name = row["username"]
+                _, status = base.smart_check(name)
+                store.record(name, status, eng.score_username(name), "watchlist")
+                print(f"  {name:<16} {status}")
+    store.close()
+
+
+def presets_mode():
+    presets = eng.load_presets()
+    keys = list(presets)
+    print("\nSCAN PRESETS\n" + "-" * 70)
+    for i, key in enumerate(keys, 1):
+        print(f"[{i:>2}] {key:<16} {presets[key].get('description','')}")
+    choice = input("Choose preset number, [d] delete custom preset, or Enter: ").strip().lower()
+    if not choice:
+        return
+    if choice == "d":
+        name = input("Preset name to delete: ").strip()
+        if name in presets and name not in eng.BUILTIN_PRESETS:
+            del presets[name]
+            eng.save_presets(presets)
+            print("Deleted.")
+        return
+    if not choice.isdigit() or not (1 <= int(choice) <= len(keys)):
+        return
+    key = keys[int(choice)-1]
+    preset = presets[key]
+    filters = eng.FilterConfig.from_dict(preset.get("filters"))
+    aesthetic = bool(preset.get("aesthetic"))
+    charset = "l" if not filters.allow_digits else "m"
+    run_target_scan(int(preset["length"]), int(preset["target"]), int(preset["max_checks"]), filters, charset, aesthetic, label=f"preset:{key}")
+
+
+def resume_mode():
+    cp = eng.load_checkpoint()
+    if not cp:
+        print("No unfinished scan checkpoint found.")
+        return
+    print(f"Resume {cp.get('mode')} scan: checked {cp.get('checked',0)}/{cp.get('max_checks')} with {len(cp.get('found',[]))}/{cp.get('target')} available?")
+    if not yesno("Resume it?", True):
+        if yesno("Discard checkpoint?", False):
+            eng.clear_checkpoint()
+        return
+    filters = eng.FilterConfig.from_dict(cp.get("filters"))
+    run_target_scan(int(cp["length"]), int(cp["target"]), int(cp["max_checks"]), filters, cp.get("charset_mode","m"), bool(cp.get("aesthetic")), resume=cp, label=cp.get("mode","resume"))
+
+
+def banned_patterns_mode():
+    path = eng.excluded_patterns_path()
+    while True:
+        patterns = eng.load_banned_patterns()
+        print(f"\nEXCLUDED PATTERNS: {path}")
+        for i, pattern in enumerate(patterns, 1):
+            print(f"[{i}] {pattern}")
+        if not patterns:
+            print("(none)")
+        choice = input("[a] add  [r] remove  [o] open file  [Enter] back: ").strip().lower()
+        if not choice:
+            return
+        if choice == "a":
+            pattern = input("Substring or regex: ").strip()
+            if pattern:
+                with open(path, "a", encoding="utf-8") as handle:
+                    handle.write(pattern + "\n")
+        elif choice == "r" and patterns:
+            raw = input("Number: ").strip()
+            if raw.isdigit() and 1 <= int(raw) <= len(patterns):
+                path.write_text("# Excluded username patterns\n" + "\n".join(p for i, p in enumerate(patterns, 1) if i != int(raw)) + "\n", encoding="utf-8")
+        elif choice == "o":
+            try:
+                if os.name == "nt":
+                    os.startfile(path)
+                else:
+                    print(path)
+            except Exception as exc:
+                print(f"Could not open file: {exc}")
+
+
+def diagnostics_mode():
+    print("\nDIAGNOSTICS\n" + "=" * 64)
+    checks = []
+    try:
+        store = eng.HistoryStore()
+        summary = store.summary()
+        store.close()
+        checks.append(("SQLite history", True, f"{summary['total']} cached names, {summary['watchlist']} watched"))
+    except Exception as exc:
+        checks.append(("SQLite history", False, str(exc)))
+    checks.append(("State directory", eng.state_dir().exists(), str(eng.state_dir())))
+    checks.append(("Portable mode", True, "ON" if eng.portable_mode() else "OFF (create portable.flag beside the EXE to enable)"))
+    try:
+        response = requests.get("https://www.roblox.com/", timeout=5)
+        checks.append(("Roblox connectivity", response.status_code < 500, f"HTTP {response.status_code}"))
+    except Exception as exc:
+        checks.append(("Roblox connectivity", False, str(exc)))
+    try:
+        token = base.ensure_token()
+        checks.append(("CSRF token", bool(token), "available" if token else "not available"))
+    except Exception as exc:
+        checks.append(("CSRF token", False, str(exc)))
+    checks.append(("Windows clipboard helper", bool(shutil.which("clip.exe")) if os.name == "nt" else True, "clip.exe" if os.name == "nt" else "not Windows"))
+    ext = eng.app_root() / "browser-extension"
+    checks.append(("Bundled browser extension", ext.exists(), str(ext)))
+    for name, ok, detail in checks:
+        print(f"  {'OK' if ok else 'FAIL':<4} {name:<27} {detail}")
+    print("\nHistory status summary:")
+    try:
+        store = eng.HistoryStore()
+        print(store.summary())
+        store.close()
+    except Exception:
+        pass
+
+
+def check_for_update(silent=False):
+    try:
+        response = requests.get(eng.GITHUB_LATEST_RELEASE, headers={"Accept":"application/vnd.github+json"}, timeout=3)
+        response.raise_for_status()
+        data = response.json()
+        latest = data.get("tag_name") or ""
+        url = data.get("html_url") or f"https://github.com/{eng.REPO}/releases"
+        if eng.is_newer_version(APP_VER, latest):
+            print(f"\nUpdate available: {latest} (current v{APP_VER})")
+            if not silent and yesno("Open Releases page?", False):
+                webbrowser.open_new_tab(url)
+            return True
+        if not silent:
+            print(f"Latest release: {latest or 'unknown'}; current: v{APP_VER}")
+    except Exception as exc:
+        if not silent:
+            print(f"Update check unavailable: {exc}")
+    return False
+
+
+def print_paths():
+    print(f"State:   {eng.state_dir()}")
+    print(f"Exports: {eng.exports_dir()}")
+    print(f"DB:      {eng.db_path()}")
+    print(f"Filters: {eng.excluded_patterns_path()}")
+
+
+def run_main():
+    print(f"{base.APP_NAME} v{APP_VER}".center(74))
+    print("(Roblox username search engine + availability checker)".center(74))
+    print_paths()
+    print("\nCSRF token: lazy-loaded only if a bulk survivor needs signup validation.")
+    if eng.load_checkpoint():
+        print("\nUnfinished scan found. Choose [r] to resume it.")
+
+    while True:
+        print("\n" + "=" * 74)
+        print(" [s] scan      [a] aesthetic   [g] generate   [m] manual   [w] wordlist")
+        print(" [x] mutate    [p] presets     [v] watchlist  [r] resume   [c] credentials")
+        print(" [b] exclusions [d] diagnostics [u] updates    [q] quit")
+        mode = input("Mode: ").strip().lower()
+        try:
+            if mode == "s":
+                scan_mode(False)
+            elif mode == "a":
+                scan_mode(True)
+            elif mode == "g":
+                generate_mode()
+            elif mode == "m":
+                manual_mode()
+            elif mode == "w":
+                wordlist_mode()
+            elif mode == "x":
+                mutation_mode()
+            elif mode == "p":
+                presets_mode()
+            elif mode == "v":
+                watchlist_mode()
+            elif mode == "r":
+                resume_mode()
+            elif mode == "c":
+                accounts.saved_accounts_mode()
+            elif mode == "b":
+                banned_patterns_mode()
+            elif mode == "d":
+                diagnostics_mode()
+            elif mode == "u":
+                check_for_update(False)
+            elif mode in {"q","quit","exit"}:
+                print("\n--- made by scarn ---")
+                return
+            elif not mode:
+                continue
+            else:
+                print("Unknown mode.")
+        except KeyboardInterrupt:
+            print("\nOperation cancelled. Returning to menu.")
+        except ValueError:
+            print("Invalid number entered. Returning to menu.")
+        except Exception as exc:
+            print(f"\nUnexpected error: {exc}\nReturning to menu.")
+
+
+if __name__ == "__main__":
+    run_main()
+~~~~~
+
+
+---
+
+# 17. COPYABLE PROMPT TO GIVE ANOTHER AI
+
+~~~~~text
+You are editing Scarn's Name Sniffer.
+
+Read this entire handoff file before changing code. It contains the current
+architecture, important invariants, build/test instructions, and a verbatim
+snapshot of every repository file that existed at the recorded tree SHA.
+
+When I request a change:
+
+1. Identify the exact files and functions involved.
+2. Preserve unrelated behavior.
+3. Preserve the rule that bulk-lookup misses still require single-name validation.
+4. Preserve secure credential handling:
+   - prepared Windows account passwords stay in Windows Credential Manager
+   - browser-extension temporary signup secrets stay background-owned/session-only
+5. Preserve rate-limit/backoff behavior.
+6. Preserve duplicate-free generation and early-stop/time-to-target behavior.
+7. Preserve cache correctness for transient failures.
+8. Preserve extension protection against replacing an existing email.
+9. Email verification remains manual.
+10. Add or update regression tests for the requested change.
+11. Run the relevant tests and syntax checks.
+12. Return complete modified files, or apply them directly if you have repository write access.
+13. Do not silently delete diagnostics, exports, portable mode, resume support,
+    watchlists, presets, caching, secure credential storage, or error handling.
+
+For scanner-speed changes, study v25_scanner.py, v25_fastnet.py, v25_engine.py,
+and roblox_name_gen.py together before editing. Optimize batching, pipelining,
+cache use, generation, local filtering, connection reuse, and unnecessary work
+rather than breaking correctness or service rate controls.
+~~~~~
