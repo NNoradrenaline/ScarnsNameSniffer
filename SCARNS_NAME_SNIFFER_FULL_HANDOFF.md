@@ -2225,3 +2225,691 @@ Blob SHA: `768698247407be040b6f95ae074378e41876208f`
 </body>
 </html>
 ~~~~~
+
+
+---
+
+## FILE: `browser-extension/popup.js`
+
+Blob SHA: `068d3586af5b96c42f840782579c4ef6bc4bb989`
+
+~~~~~javascript
+(() => {
+  "use strict";
+
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  const birthday = document.getElementById("birthday");
+  const email = document.getElementById("email");
+  const status = document.getElementById("status");
+  const save = document.getElementById("save");
+  const clearBirthday = document.getElementById("clear-birthday");
+  const clearEmail = document.getElementById("clear-email");
+  const history = document.getElementById("history");
+  const enterSubmit = document.getElementById("enter-submit");
+  const autoEmail = document.getElementById("auto-email");
+
+  chrome.storage.local.get(
+    {
+      birthday: "",
+      emailAddress: "",
+      autoAddEmail: false,
+      accountHistory: [],
+      enterSubmit: true,
+      emailSetupStatus: ""
+    },
+    values => {
+      birthday.value = values.birthday || "";
+      email.value = values.emailAddress || "";
+      autoEmail.checked = values.autoAddEmail === true;
+      enterSubmit.checked = values.enterSubmit !== false;
+
+      const count = Array.isArray(values.accountHistory)
+        ? values.accountHistory.length
+        : 0;
+
+      history.textContent =
+        count + " account" + (count === 1 ? "" : "s") +
+        " recorded locally." +
+        (values.emailSetupStatus
+          ? " Email helper: " + values.emailSetupStatus
+          : "");
+    }
+  );
+
+  enterSubmit.addEventListener("change", () => {
+    chrome.storage.local.set({ enterSubmit: enterSubmit.checked }, () => {
+      status.textContent = enterSubmit.checked
+        ? "Enter-to-submit enabled ✓"
+        : "Enter-to-submit disabled.";
+    });
+  });
+
+  autoEmail.addEventListener("change", () => {
+    const emailValue = email.value.trim();
+
+    if (autoEmail.checked && !EMAIL_RE.test(emailValue)) {
+      autoEmail.checked = false;
+      status.textContent =
+        "Enter and save a valid email before enabling Auto-add Email.";
+      return;
+    }
+
+    chrome.storage.local.set(
+      { autoAddEmail: autoEmail.checked },
+      () => {
+        status.textContent = autoEmail.checked
+          ? "Auto-add Email enabled ✓"
+          : "Auto-add Email disabled.";
+      }
+    );
+  });
+
+  save.addEventListener("click", () => {
+    const emailValue = email.value.trim();
+
+    if (emailValue && !EMAIL_RE.test(emailValue)) {
+      status.textContent = "Enter a valid email address.";
+      return;
+    }
+
+    if (autoEmail.checked && !emailValue) {
+      status.textContent =
+        "Auto-add Email needs a saved email address.";
+      return;
+    }
+
+    chrome.storage.local.set(
+      {
+        birthday: birthday.value || "",
+        emailAddress: emailValue,
+        autoAddEmail: autoEmail.checked && Boolean(emailValue)
+      },
+      () => {
+        status.textContent = "Settings saved ✓";
+      }
+    );
+  });
+
+  clearBirthday.addEventListener("click", () => {
+    chrome.storage.local.remove("birthday", () => {
+      birthday.value = "";
+      status.textContent = "Saved birthday cleared.";
+    });
+  });
+
+  clearEmail.addEventListener("click", () => {
+    chrome.storage.local.remove(
+      ["emailAddress", "emailSetupPending", "emailSetupStatus"],
+      () => {
+        chrome.storage.local.set({ autoAddEmail: false }, () => {
+          chrome.runtime.sendMessage(
+            { type: "scarn:clearPendingSecret" },
+            () => {
+              email.value = "";
+              autoEmail.checked = false;
+              status.textContent =
+                "Saved email and pending email job cleared.";
+            }
+          );
+        });
+      }
+    );
+  });
+})();
+~~~~~
+
+
+---
+
+## FILE: `docs/index.html`
+
+Blob SHA: `8f59e4e9b0ad9eaa0a9355e57e9bd41ca3657ef2`
+
+~~~~~html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Scarn's Name Sniffer v2.5 is a Windows Roblox username generator and availability checker with secure credential storage and an optional Chrome/Edge autofill companion." />
+  <title>Scarn's Name Sniffer v2.5</title>
+  <style>
+    :root { color-scheme: dark; --bg:#080b10; --panel:#0f141c; --panel2:#141b25; --text:#eef4ff; --muted:#94a3b8; --green:#53f59a; --cyan:#65d9ff; --line:#243041; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:radial-gradient(circle at 50% -20%,#152236 0,#080b10 38rem); color:var(--text); }
+    a { color:inherit; }
+    .wrap { width:min(1060px,calc(100% - 36px)); margin:auto; }
+    nav { display:flex; justify-content:space-between; align-items:center; padding:24px 0; }
+    .brand { font-weight:800; }
+    .navlinks { display:flex; gap:18px; color:var(--muted); font-size:14px; }
+    .hero { padding:78px 0 50px; text-align:center; }
+    .eyebrow { display:inline-flex; padding:8px 12px; border:1px solid var(--line); border-radius:999px; color:var(--green); background:#0c1319; font:600 13px ui-monospace,SFMono-Regular,Consolas,monospace; }
+    h1 { font-size:clamp(44px,8vw,82px); line-height:.95; letter-spacing:-.055em; margin:24px auto 22px; max-width:900px; }
+    .lead { color:var(--muted); font-size:clamp(18px,2.4vw,22px); line-height:1.6; max-width:760px; margin:0 auto 30px; }
+    .actions { display:flex; flex-wrap:wrap; justify-content:center; gap:12px; }
+    .btn { text-decoration:none; border-radius:10px; padding:13px 18px; font-weight:800; border:1px solid var(--line); background:var(--panel); }
+    .btn.primary { background:var(--green); color:#04120a; border-color:transparent; }
+    .terminal { margin:50px auto 0; max-width:820px; text-align:left; border:1px solid var(--line); background:#080c11; border-radius:16px; overflow:hidden; box-shadow:0 30px 90px #0008; }
+    .bar { padding:12px 14px; border-bottom:1px solid var(--line); background:#0d1219; }
+    pre { margin:0; padding:22px; overflow:auto; font:14px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace; color:#d8e5f5; }
+    section { padding:54px 0; }
+    h2 { font-size:36px; letter-spacing:-.035em; margin:0 0 12px; }
+    .sub { color:var(--muted); margin:0 0 28px; line-height:1.6; }
+    .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+    .card { border:1px solid var(--line); background:linear-gradient(180deg,var(--panel2),var(--panel)); border-radius:14px; padding:20px; }
+    .card strong { display:block; font-size:17px; margin-bottom:8px; }
+    .card p { color:var(--muted); line-height:1.55; margin:0; font-size:14px; }
+    .steps { counter-reset:step; display:grid; gap:12px; }
+    .step { counter-increment:step; padding:18px 20px 18px 62px; position:relative; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
+    .step:before { content:counter(step); position:absolute; left:18px; top:15px; width:28px; height:28px; display:grid; place-items:center; border-radius:50%; background:var(--green); color:#04120a; font-weight:900; }
+    code { color:var(--cyan); }
+    footer { border-top:1px solid var(--line); padding:30px 0 44px; color:var(--muted); font-size:14px; display:flex; justify-content:space-between; gap:20px; }
+    @media (max-width:760px) { .grid { grid-template-columns:1fr; } .navlinks { display:none; } footer { flex-direction:column; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav>
+      <div class="brand">🔎 Scarn's Name Sniffer</div>
+      <div class="navlinks"><a href="#features">Features</a><a href="#download">Download</a><a href="https://github.com/NNoradrenaline/ScarnsNameSniffer">GitHub</a></div>
+    </nav>
+    <main>
+      <div class="hero">
+        <div class="eyebrow">WINDOWS · v2.5 · MADE BY SCARN</div>
+        <h1>Sniff out a Roblox name worth keeping.</h1>
+        <p class="lead">Generate short usernames, check availability, hunt for word-like names, scan custom wordlists, save finds, and optionally use the browser companion for signup autofill.</p>
+        <div class="actions">
+          <a class="btn primary" href="https://github.com/NNoradrenaline/ScarnsNameSniffer/releases/latest">Download latest release</a>
+          <a class="btn" href="https://github.com/NNoradrenaline/ScarnsNameSniffer">View source</a>
+        </div>
+        <div class="terminal">
+          <div class="bar">● ● ●</div>
+          <pre>                 Scarn's Name Sniffer v2.5
+       (Roblox username generator + availability checker)
+
+Fetching CSRF token... OK
+
+Mode: [s]can [g]enerate [a]esthetic-only [m]anual [w]ordlist [c]redentials?</pre>
+        </div>
+      </div>
+      <section id="features">
+        <h2>Built for the name hunt.</h2>
+        <p class="sub">Fast checks, practical generation modes, and a local credential workflow without requiring an existing Roblox password or cookie.</p>
+        <div class="grid">
+          <div class="card"><strong>🔍 Availability scan</strong><p>Generate usernames and check them against Roblox's validation service.</p></div>
+          <div class="card"><strong>✨ Aesthetic mode</strong><p>Favor more pronounceable results using consonant/vowel patterns and word-like scoring.</p></div>
+          <div class="card"><strong>⌨️ Manual + wordlist modes</strong><p>Check names you already have or feed the tool a custom wordlist.</p></div>
+          <div class="card"><strong>🔐 Saved Accounts</strong><p>Generated single-name credentials can be stored locally in Windows Credential Manager.</p></div>
+          <div class="card"><strong>🌐 Autofill companion</strong><p>Optional Chrome/Edge extension fills birthday, username, and generated password.</p></div>
+          <div class="card"><strong>↵ Enter to submit</strong><p>After autofill, press Enter to activate Roblox's normal visible signup button.</p></div>
+        </div>
+      </section>
+      <section id="download">
+        <h2>Download from Releases</h2>
+        <p class="sub">Normal users do not need Python or PyInstaller.</p>
+        <div class="steps">
+          <div class="step"><strong>Open GitHub Releases.</strong><br>Download the latest v2.5 Windows release.</div>
+          <div class="step"><strong>Run the app.</strong><br>Launch <code>ScarnsNameSniffer.exe</code>.</div>
+          <div class="step"><strong>Optional extension.</strong><br>Extract <code>ScarnsNameSniffer-Autofill-v2.5.zip</code>, enable Developer mode in Chrome/Edge, and use Load unpacked on the folder containing <code>manifest.json</code>.</div>
+        </div>
+      </section>
+    </main>
+    <footer><span>Unofficial community tool. Not affiliated with Roblox Corporation.</span><span>Scarn's Name Sniffer v2.5</span></footer>
+  </div>
+</body>
+</html>
+~~~~~
+
+
+---
+
+## FILE: `portable.flag.example`
+
+Blob SHA: `d4e13cf2519efa56f394e37e1766498045d3ae07`
+
+~~~~~text
+Rename this file to portable.flag and place it beside ScarnsNameSniffer.exe to enable portable mode.
+
+Portable mode stores scanner history, presets, exclusions, resume data, and exports under a local data/ folder beside the EXE.
+~~~~~
+
+
+---
+
+## FILE: `requirements.txt`
+
+Blob SHA: `0eb8cae7f9083d1b4e70d94cbd6ac82cd63476d9`
+
+~~~~~text
+requests>=2.31.0
+~~~~~
+
+
+---
+
+## FILE: `roblox_name_gen.py`
+
+Blob SHA: `81e49eecf53ed775669acb85e5060714eabb1592`
+
+~~~~~python
+#!/usr/bin/env python3
+import requests, random, string, time, sys, re, os, webbrowser, subprocess, secrets, ctypes
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
+from collections import Counter
+from datetime import datetime
+
+LETTERS = string.ascii_lowercase
+DIGITS  = string.digits
+CHARSET = LETTERS + DIGITS
+NUMBERS_ONLY = DIGITS
+VOWELS  = set('aeiou')
+MAX_WORKERS = 10
+REQUEST_DELAY = 0.15
+
+COMMON_BIGRAMS = {
+    'th','he','in','er','an','re','ed','on','es','st','en','at',
+    'to','nt','wa','hi','it','nd','ha','ou','ea','ng','al','ar',
+    've','ra','le','sa','ro','li','se','la','ne','el','ma','ch',
+    'sh','io','ti','ci','si','be','me','de','no','te','co','ca',
+    'pa','ta','lo','fo','ho','mo','ke','so','wo','pe','qu','ph',
+    'gh','ck','ke','ly','ty','ry','ny','ll','ss','tt','ff','bb',
+    'dd','gg','mm','nn','pp','rr'
+}
+NICE_ENDINGS = {'er','ly','ed','en','al','el','le','on','an','ar',
+                'ck','ng','ty','ry','ke','ne','ll','ss','tt'}
+NICE_STARTS = {'th','he','re','be','de','co','ca','pa','ma','ta',
+               'lo','ro','ho','mo','ke','se','le','ne','te','ve',
+               'ra','st','wh','ch','sh','fl','tr','br','gr','pr',
+               'dr','fr','pl','cl','bl','gl','cr','sp','sw','tw'}
+CONS = list('bcdfghjklmnpqrstvwxyz')
+
+PATTERNS_4 = ['CVCV','VCVC','CVCC','CCVC','VCCV','CVC']
+PATTERNS_5 = ['CVCVC','CVCV','VCVCV','VCCVC','CVCCV','CVCVV','VVCVC','CCVCC','CVC','VCVC']
+PATTERNS_6 = ['CVCVCV','VCVCVC','CVCCVC','VCCVCC','CVCVCC','VCVCCV','CCVCVC','CVCCVV']
+
+APP_NAME = "Scarn's Name Sniffer"
+APP_VER = "2.4"
+ROBLOX_REGISTRATION_URL = "https://www.roblox.com/CreateAccount"
+SAVE_DIR = os.path.join(os.path.expanduser("~"), "Desktop")
+os.makedirs(SAVE_DIR, exist_ok=True)
+
+# ── Secure account credential storage ─────────────────────────
+PASSWORD_LOWER = "abcdefghijkmnopqrstuvwxyz"
+PASSWORD_UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+PASSWORD_DIGITS = "23456789"
+PASSWORD_SYMBOLS = "!@#$%"
+
+
+def generate_account_password(length=16):
+    """Generate a strong password without ambiguous characters."""
+    rng = secrets.SystemRandom()
+    chars = [
+        secrets.choice(PASSWORD_LOWER),
+        secrets.choice(PASSWORD_UPPER),
+        secrets.choice(PASSWORD_DIGITS),
+        secrets.choice(PASSWORD_SYMBOLS),
+    ]
+    alphabet = PASSWORD_LOWER + PASSWORD_UPPER + PASSWORD_DIGITS + PASSWORD_SYMBOLS
+    while len(chars) < max(12, length):
+        chars.append(secrets.choice(alphabet))
+    rng.shuffle(chars)
+    return "".join(chars)
+
+
+def save_windows_credential(username, password):
+    """Save one Roblox credential in Windows Credential Manager.
+
+    The password is stored as a Generic Credential under the current Windows
+    account. Nothing is written to a plaintext password file.
+    """
+    if os.name != "nt":
+        return False
+
+    try:
+        from ctypes import wintypes
+
+        class FILETIME(ctypes.Structure):
+            _fields_ = [
+                ("dwLowDateTime", wintypes.DWORD),
+                ("dwHighDateTime", wintypes.DWORD),
+            ]
+
+        class CREDENTIALW(ctypes.Structure):
+            _fields_ = [
+                ("Flags", wintypes.DWORD),
+                ("Type", wintypes.DWORD),
+                ("TargetName", wintypes.LPWSTR),
+                ("Comment", wintypes.LPWSTR),
+                ("LastWritten", FILETIME),
+                ("CredentialBlobSize", wintypes.DWORD),
+                ("CredentialBlob", ctypes.POINTER(ctypes.c_ubyte)),
+                ("Persist", wintypes.DWORD),
+                ("AttributeCount", wintypes.DWORD),
+                ("Attributes", ctypes.c_void_p),
+                ("TargetAlias", wintypes.LPWSTR),
+                ("UserName", wintypes.LPWSTR),
+            ]
+
+        advapi32 = ctypes.WinDLL("Advapi32.dll", use_last_error=True)
+        cred_write = advapi32.CredWriteW
+        cred_write.argtypes = [ctypes.POINTER(CREDENTIALW), wintypes.DWORD]
+        cred_write.restype = wintypes.BOOL
+
+        blob = password.encode("utf-16-le")
+        blob_buffer = ctypes.create_string_buffer(blob)
+
+        credential = CREDENTIALW()
+        credential.Flags = 0
+        credential.Type = 1
+        credential.TargetName = f"ScarnsNameSniffer:{username}"
+        credential.Comment = f"Saved by {APP_NAME} v{APP_VER}"
+        credential.CredentialBlobSize = len(blob)
+        credential.CredentialBlob = ctypes.cast(blob_buffer, ctypes.POINTER(ctypes.c_ubyte))
+        credential.Persist = 2
+        credential.AttributeCount = 0
+        credential.Attributes = None
+        credential.TargetAlias = None
+        credential.UserName = username
+
+        return bool(cred_write(ctypes.byref(credential), 0))
+    except Exception:
+        return False
+
+
+def make_autofill_payload(username, password, saved):
+    return f"SCARN_AUTOFILL_V2|{username}|{password}|{1 if saved else 0}"
+
+# ── Clipboard helper ──────────────────────────────────────────
+def copy_to_clipboard(text):
+    """Copy text to the Windows clipboard reliably."""
+    text = str(text)
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        proc = subprocess.Popen(["clip.exe"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, creationflags=creationflags)
+        proc.communicate(text, timeout=5)
+        if proc.returncode == 0: return True
+    except Exception:
+        pass
+    try:
+        proc = subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "[Console]::In.ReadToEnd() | Set-Clipboard"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, creationflags=creationflags)
+        proc.communicate(text, timeout=5)
+        if proc.returncode == 0: return True
+    except Exception:
+        pass
+    return False
+
+def print_available(name, extra=""):
+    print(f"    -> \033[92m{name}\033[0m  {extra}")
+
+# ── Scoring ──────────────────────────────────────────────────
+def is_wordlike(name):
+    name = name.lower(); n = len(name)
+    if n < 3 or not any(c in VOWELS for c in name): return 0
+    cur_cons = 0
+    for c in name:
+        if c in VOWELS: cur_cons = 0
+        else: cur_cons += 1
+        if cur_cons > 3: return 0
+    score = sum(2 for i in range(n-1) if name[i:i+2] in COMMON_BIGRAMS)
+    if n >= 2 and name[-2:] in NICE_ENDINGS: score += 3
+    if n >= 3 and name[-3:] in ('ing','ion','ent','ive','ble','ght'): score += 4
+    if name[:2] in NICE_STARTS: score += 2
+    vc = sum(1 for c in name if c in VOWELS)
+    if vc in (2,3): score += 2
+    elif vc in (1,4): score += 1
+    dc = sum(1 for c in name if c in DIGITS)
+    if dc > 2: score -= 2
+    elif dc == 0: score += 1
+    if n >= 4 and all((name[i] in VOWELS) != (name[i+1] in VOWELS) for i in range(n-1)): score += 3
+    ugly = {'xz','zx','xq','qx','qq','zz','jj','vv','ww','yy','kk','hx','xj','jz','zq','qj'}
+    for i in range(n-1):
+        if name[i:i+2] in ugly: score -= 3
+    return max(0, score)
+
+def is_aesthetic(name): return is_wordlike(name) >= 5
+
+def generate_aesthetic(length=5):
+    if length < 3: return ''.join(random.choices(LETTERS, k=length))
+    pattern_map = {4: PATTERNS_4, 5: PATTERNS_5, 6: PATTERNS_6}
+    usable = pattern_map.get(length, []) or [p for p in (PATTERNS_4+PATTERNS_5+PATTERNS_6) if abs(len(p)-length) <= 1]
+    if not usable: usable = PATTERNS_5
+    name_chars=[]
+    for ch in random.choice(usable):
+        name_chars.append(random.choice(CONS) if ch == 'C' else random.choice(list(VOWELS)) if ch == 'V' else ch)
+    result=''.join(name_chars)[:length]
+    while len(result)<length: result += random.choice(LETTERS)
+    leet={'a':'4','e':'3','i':'1','o':'0','s':'5','t':'7'}
+    if random.random()<0.25:
+        idx=random.randrange(len(result))
+        if result[idx] in leet and random.random()<0.5:
+            lst=list(result); lst[idx]=leet[result[idx]]; result=''.join(lst)
+    return result
+
+def generate_random(length=5, charset=None): return ''.join(random.choices(charset or CHARSET, k=length))
+
+def generate_from_word(word, length=5):
+    word=word.strip().lower()
+    if not word: return None
+    if len(word)==length: return word
+    if len(word)<length: return word + ''.join(random.choices(CHARSET, k=length-len(word)))
+    return word[:length]
+
+def save_results(names, mode_desc="batch", extra=""):
+    timestamp=datetime.now().strftime("%Y-%m-%d_%H-%M-%S"); filename=f"sniff_{timestamp}.txt"; filepath=os.path.join(SAVE_DIR,filename)
+    with open(filepath,'w') as f:
+        f.write(f"{APP_NAME} v{APP_VER}\nMode: {mode_desc}\nDate: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n{'='*40}\n")
+        for name in names: f.write(f"{name}\n")
+        if extra: f.write(f"\n{extra}\n")
+        f.write("\n--- made by scarn ---\n")
+    print(f"\n  [SAVED] Results written to: {filepath}"); return filepath
+
+def open_registration_page(name=None):
+    if not name:
+        try: webbrowser.open_new_tab(ROBLOX_REGISTRATION_URL); print("    Opening Roblox Create Account...")
+        except Exception as e: print(f"    Could not open browser: {e}")
+        return
+    password=generate_account_password(); saved=save_windows_credential(name,password); copied=copy_to_clipboard(make_autofill_payload(name,password,saved))
+    print(f"    Saved '{name}' securely in Windows Credential Manager." if saved else "    Warning: Windows Credential Manager save failed.")
+    print("    Prepared one-time autofill handoff for the browser companion." if copied else "    Clipboard handoff failed; browser autofill may need manual input.")
+    try:
+        webbrowser.open_new_tab(ROBLOX_REGISTRATION_URL); print("    Opening Roblox Create Account..."); print("    Companion v2.4 will fill username/password and clear the clipboard handoff.")
+    except Exception as e: print(f"    Could not open browser: {e}")
+
+def open_signup_pages(names, max_tabs=10):
+    selected=list(names[:max_tabs])
+    if not selected: return
+    print("    Bulk mode opens signup tabs only. Use single-name claim mode for secure password saving.")
+    for i,_name in enumerate(selected):
+        try:
+            if i==0: webbrowser.open_new(ROBLOX_REGISTRATION_URL)
+            else: webbrowser.open_new_tab(ROBLOX_REGISTRATION_URL)
+        except Exception: pass
+
+TOKEN_LOCK=Lock(); CSRF_TOKEN=None; SESH=requests.Session(); SESH.headers.update({"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+def get_csrf_token():
+    global CSRF_TOKEN
+    try:
+        resp=SESH.post("https://auth.roblox.com/v2/logout",timeout=10); tok=resp.headers.get("x-csrf-token")
+        if tok: CSRF_TOKEN=tok; return tok
+        resp2=SESH.get("https://www.roblox.com/",timeout=10); m=re.search(r'data-token="([^"]+)"',resp2.text)
+        if m: CSRF_TOKEN=m.group(1); return m.group(1)
+    except: pass
+    return None
+def ensure_token():
+    global CSRF_TOKEN
+    # Fast path: once initialized, concurrent validators avoid the lock.
+    if CSRF_TOKEN:
+        return CSRF_TOKEN
+    with TOKEN_LOCK:
+        if CSRF_TOKEN:
+            return CSRF_TOKEN
+        return get_csrf_token()
+def refresh_token():
+    with TOKEN_LOCK: return get_csrf_token()
+def check_username(name):
+    url="https://auth.roblox.com/v1/usernames/validate"; params={"request.username":name,"request.context":"Signup","request.birthday":"2000-01-01"}; token=ensure_token(); headers={"x-csrf-token":token} if token else {}
+    try:
+        resp=SESH.get(url,params=params,headers=headers,timeout=10)
+        if resp.status_code==403:
+            t2=refresh_token()
+            if t2: headers["x-csrf-token"]=t2; resp=SESH.get(url,params=params,headers=headers,timeout=10)
+        if resp.status_code==429:return(name,"ratelimited")
+        if resp.status_code==403:return(name,"csrf_blocked")
+        if resp.status_code!=200:return(name,f"http_{resp.status_code}")
+        data=resp.json(); msg=data.get("message",""); code=data.get("code")
+        if "Username is valid" in msg or "Valid username" in msg:return(name,"available")
+        if "already in use" in msg or "AlreadyInUse" in msg:return(name,"taken")
+        if "not appropriate" in msg or "inappropriate" in msg:return(name,"inappropriate")
+        if "start or end with" in msg or "cannot start" in msg:return(name,"invalid_format")
+        if code==0:return(name,"available")
+        if code in(1,4):return(name,"taken")
+        if code==2:return(name,"invalid_length")
+        if code==3:return(name,"inappropriate")
+        return(name,f"unknown({msg[:40]})")
+    except requests.exceptions.RequestException as e:return(name,f"error({e})")
+def check_username_v2(name):
+    url="https://auth.roblox.com/v2/usernames/validate"; params={"request.username":name,"request.birthday":"04/15/2002","request.context":"Signup"}; token=ensure_token(); headers={"x-csrf-token":token} if token else {}
+    try:
+        resp=SESH.get(url,params=params,headers=headers,timeout=10)
+        if resp.status_code==403:
+            t2=refresh_token()
+            if t2: headers["x-csrf-token"]=t2; resp=SESH.get(url,params=params,headers=headers,timeout=10)
+        if resp.status_code!=200:return(name,None)
+        c=resp.json().get("code","")
+        if "ValidUsername" in c:return(name,"available")
+        if "AlreadyInUseError" in c:return(name,"taken")
+        return(name,None)
+    except:return(name,None)
+def smart_check(name):
+    r=check_username(name)
+    if r[1] and (r[1].startswith("unknown") or r[1].startswith("error(")):
+        r2=check_username_v2(name)
+        if r2[1] is not None:return r2
+    return r
+p_lock=Lock()
+def p_prog(name,status,found,total):
+    with p_lock:
+        mark="AVAILABLE <<<<" if status=="available" else "taken" if status=="taken" else (status or "?")[:25]; sys.stdout.write(f"\r  [{total:>4}] {name:<8} -> {mark:<30}"); sys.stdout.flush()
+def pick_length():
+    l=input("Name length? [4/5/6] (default 5): ").strip(); return int(l) if l in('4','6') else 5
+def get_tab_count():
+    ans=input("  Max browser tabs to open? (default 10, 0 to skip): ").strip()
+    try:return max(0,int(ans))
+    except:return 10
+def claim_available_name(names):
+    unique_names=list(dict.fromkeys(names))
+    if not unique_names:return
+    print("\n  CLAIM A NAME\n  "+"-"*36)
+    for i,name in enumerate(unique_names,1):print(f"  [{i:>2}] {name}")
+    while True:
+        choice=input("\n  Choose a number to claim, [b] bulk open, or Enter to skip: ").strip().lower()
+        if not choice:return
+        if choice=='b': open_signup_pages(unique_names,get_tab_count()); return
+        if choice.isdigit():
+            idx=int(choice)-1
+            if 0<=idx<len(unique_names):open_registration_page(unique_names[idx]); return
+        print(f"  Enter a number from 1 to {len(unique_names)}, 'b', or press Enter to skip.")
+
+def manual_lookup_mode():
+    print("\n--- Manual Lookup Mode ---\nType usernames to check one at a time. Type 'done' to finish.\n"); found=[]; checked=[]
+    while True:
+        name=input("  Check name: ").strip()
+        if not name or name.lower()=='done':break
+        if not re.match(r'^[a-zA-Z0-9_]+$',name):print("    Invalid (letters, numbers, underscores only)");continue
+        _,status=smart_check(name.lower());checked.append((name,status))
+        if status=="available":print(f"    -> \033[92m{name.lower()}\033[0m: AVAILABLE!");found.append(name.lower())
+        elif status=="taken":print(f"    -> {name}: Taken")
+        else:print(f"    -> {name}: {status}")
+    print(f"\n{'='*55}\n  MANUAL LOOKUP RESULTS\n{'='*55}")
+    for n,s in checked: print(f"    \033[92m{n:<15}\033[0m -> AVAILABLE <<<<" if s=="available" else f"    {n:<15} -> {s}")
+    if found:
+        claim_available_name(found); ans2=input("  Save to desktop? [Y/n]: ").strip().lower()
+        if ans2!='n':save_results(found,"manual-lookup")
+    print("\n--- made by scarn ---\n")
+
+def wordlist_mode(length):
+    path=input("Path to wordlist file: ").strip().replace('"','')
+    if not os.path.exists(path):print(f"  File not found: {path}");return
+    with open(path,'r',encoding='utf-8',errors='ignore') as f:words=[w.strip() for w in f.readlines() if w.strip()]
+    variations=list(set(filter(None,[generate_from_word(w,length) for w in words])));print(f"  Loaded {len(words)} words from file\n  Generated {len(variations)} unique {length}-char variations\n\nChecking {len(variations)} names...\n")
+    res=[]
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        for i,f in enumerate(as_completed({ex.submit(smart_check,n):n for n in variations})):
+            res.append(f.result());n,s=res[-1];p_prog(n,s,len([r for r in res if r[1]=="available"]),i+1)
+            if(i+1)%MAX_WORKERS==0:time.sleep(REQUEST_DELAY)
+    av=[n for n,s in res if s=="available"];aest=[n for n in av if is_aesthetic(n)];rand=[n for n in av if not is_aesthetic(n)]
+    print(f"\n\n{'='*55}\n  WORDLIST RESULTS ({length} chars) - Available: {len(av)}/{len(variations)}\n{'='*55}")
+    if aest:
+        print(f"\n  AESTHETIC ({len(aest)}):")
+        for n in aest:print_available(n,f"({is_wordlike(n)}/10)")
+    if rand:
+        print(f"\n  RANDOM ({len(rand)}):")
+        for n in rand:print_available(n)
+    if av:
+        claim_available_name(av);ans2=input("  Save to desktop? [Y/n]: ").strip().lower()
+        if ans2!='n':save_results(av,"wordlist",f"Source: {path}")
+    print("\n--- made by scarn ---\n")
+
+if __name__=="__main__":
+    try:
+        print(f"{APP_NAME} v{APP_VER}".center(55));print("(Roblox username generator + availability checker)".center(55));print();print("Fetching CSRF token...",end=" ");tok=get_csrf_token();print(f"{'OK' if tok else 'FAILED'}\n")
+        mode=input("Mode: [s]can [g]enerate [a]esthetic-only [m]anual [w]ordlist? ").strip().lower()
+        if mode=='m':manual_lookup_mode()
+        elif mode=='w':wordlist_mode(pick_length())
+        elif mode=='a':
+            length=pick_length();target=int(input("How many aesthetic names to find? ") or "5");max_c=int(input("Max checks? ") or "500");found=[];total=0
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                while len(found)<target and total<max_c:
+                    bs=min(MAX_WORKERS,max_c-total);names=[generate_aesthetic(length) for _ in range(bs)]
+                    for f in as_completed({ex.submit(smart_check,n):n for n in names}):
+                        n,s=f.result();total+=1
+                        if s=="available":found.append(n)
+                        p_prog(n,s,len(found),total)
+                    time.sleep(REQUEST_DELAY)
+            print(f"\n\n{'='*55}\n  AESTHETIC AVAILABLE ({length} chars): {len(found)}\n{'='*55}")
+            for n in found:print_available(n)
+            if found:
+                claim_available_name(found);ans2=input("  Save to desktop? [Y/n]: ").strip().lower()
+                if ans2!='n':save_results(found,f"aesthetic-{length}char")
+            print("\n--- made by scarn ---\n")
+        elif mode=='s':
+            length=pick_length();target=int(input("How many names to find? ") or "5");print("Charset options:\n  [L] Letters only (a-z)\n  [M] Mixed letters+digits (default)\n  [N] Numbers only (0-9)");cs_in=input("Choose: ").strip().lower();cs=LETTERS if cs_in=='l' else NUMBERS_ONLY if cs_in=='n' else CHARSET;max_c=int(input("Max checks? ") or "500");found=[];total=0
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                while len(found)<target and total<max_c:
+                    bs=min(MAX_WORKERS,max_c-total);names=[generate_random(length,cs) for _ in range(bs)]
+                    for f in as_completed({ex.submit(smart_check,n):n for n in names}):
+                        n,s=f.result();total+=1
+                        if s=="available":found.append(n)
+                        p_prog(n,s,len(found),total)
+                    time.sleep(REQUEST_DELAY)
+            print(f"\n\n{'='*55}\n  SCAN DONE - Checked {total}, found {len(found)} available ({length} chars)\n{'='*55}")
+            for n in found:print_available(n)
+            if not found:print("    (none found)")
+            if found:
+                claim_available_name(found);ans2=input("  Save to desktop? [Y/n]: ").strip().lower()
+                if ans2!='n':save_results(found,f"scan-{length}char")
+            print("\n--- made by scarn ---\n")
+        else:
+            length=pick_length();batch=int(input("How many names? ") or "100");aeh=input("Aesthetic/word-like? [y/N]: ").strip().lower()=='y';print("Charset options:\n  [L] Letters only (a-z)\n  [M] Mixed letters+digits (default)\n  [N] Numbers only (0-9)");cs_in=input("Choose: ").strip().lower();cs=LETTERS if cs_in=='l' else NUMBERS_ONLY if cs_in=='n' else CHARSET;names=[generate_aesthetic(length) if aeh else generate_random(length,cs) for _ in range(batch)];res=[]
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                for i,f in enumerate(as_completed({ex.submit(smart_check,n):n for n in names})):
+                    res.append(f.result());n,s=res[-1];p_prog(n,s,len([r for r in res if r[1]=="available"]),i+1)
+                    if(i+1)%MAX_WORKERS==0:time.sleep(REQUEST_DELAY)
+            av=[n for n,s in res if s=="available"];aest=[n for n in av if is_aesthetic(n)];rand=[n for n in av if not is_aesthetic(n)]
+            print(f"\n\n{'='*55}\n  RESULTS ({length} chars) - Available: {len(av)}/{batch}\n{'='*55}")
+            if aest:
+                print(f"\n  AESTHETIC ({len(aest)}):")
+                for n in aest:print_available(n,f"({is_wordlike(n)}/10)")
+            if rand:
+                print(f"\n  RANDOM ({len(rand)}):")
+                for n in rand:print_available(n)
+            if av:
+                claim_available_name(av);ans2=input("  Save to desktop? [Y/n]: ").strip().lower()
+                if ans2!='n':save_results(av,f"batch-{length}char")
+            print("\n--- made by scarn ---\n")
+        input("Press Enter to exit...")
+    except KeyboardInterrupt:
+        print("\n\nExiting.\n--- made by scarn ---");input("Press Enter to exit...")
+~~~~~
