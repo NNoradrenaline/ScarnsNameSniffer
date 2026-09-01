@@ -507,3 +507,635 @@ Build/release:
 # 16. COMPLETE VERBATIM SOURCE SNAPSHOT
 
 The following sections are appended verbatim from the repository snapshot above.
+
+
+---
+
+## FILE: `.github/workflows/build-windows.yml`
+
+Blob SHA: `f116cefe1c4163978c7e5a2e0155f6b362936454`
+
+~~~~~yaml
+name: Build Windows EXE
+
+# v2.5 clean build: never commits or pushes from inside GitHub Actions.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "roblox_name_gen.py"
+      - "v25_launcher.py"
+      - "v25_scanner.py"
+      - "v25_engine.py"
+      - "v25_fastnet.py"
+      - "tests/**"
+      - "portable.flag.example"
+      - "v25_entry.py"
+      - "requirements.txt"
+      - "icon.ico"
+      - "browser-extension/**"
+      - ".github/workflows/build-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Verify source
+        shell: pwsh
+        run: |
+          python -m py_compile roblox_name_gen.py
+          python -m py_compile v25_launcher.py
+          python -m py_compile v25_scanner.py
+          python -m py_compile v25_engine.py
+          python -m py_compile v25_fastnet.py
+          python -m py_compile v25_entry.py
+          node --check browser-extension/background.js
+          node --check browser-extension/content.js
+          node --check browser-extension/email.js
+          node --check browser-extension/enter-submit.js
+          node --check browser-extension/popup.js
+          python -c "import json; json.load(open('browser-extension/manifest.json', encoding='utf-8'))"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+          python -m pip install pytest
+
+      - name: Run test suite
+        shell: pwsh
+        run: |
+          python -m pytest -q
+
+      - name: Build Scarn's Name Sniffer v2.5
+        shell: pwsh
+        run: |
+          if (Test-Path "icon.ico") {
+            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" --icon "icon.ico" v25_entry.py
+          } else {
+            python -m PyInstaller --onefile --clean --noconfirm --name "ScarnsNameSniffer" v25_entry.py
+          }
+
+      - name: Stage v2.5 package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          Copy-Item dist/ScarnsNameSniffer.exe package/ScarnsNameSniffer.exe
+          Copy-Item browser-extension package/browser-extension -Recurse
+          Copy-Item portable.flag.example package/portable.flag.example
+          Compress-Archive -Path browser-extension\* -DestinationPath package\ScarnsNameSniffer-Autofill-v2.5.zip -Force
+          Compress-Archive -Path browser-extension\* -DestinationPath ScarnsNameSniffer-Autofill-v2.5.zip -Force
+
+      - name: Upload full Windows + extension bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScarnsNameSniffer-v2.5-Windows
+          path: package
+          if-no-files-found: error
+
+      - name: Upload release-ready extension ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScarnsNameSniffer-v2.5-Autofill-Extension
+          path: ScarnsNameSniffer-Autofill-v2.5.zip
+          if-no-files-found: error
+~~~~~
+
+
+---
+
+## FILE: `.gitignore`
+
+Blob SHA: `fa9abd56bde89b545bb925c36fb288672c0e5c5d`
+
+~~~~~text
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.spec
+*.log
+.env
+.venv/
+venv/
+*.pyc
+.pytest_cache/
+data/
+portable.flag
+~~~~~
+
+
+---
+
+## FILE: `README.md`
+
+Blob SHA: `8b98f42978ea118fed3a7026294779891d8dc49d`
+
+~~~~~markdown
+<div align="center">
+
+# 🔎 Scarn's Name Sniffer
+
+### A fast Roblox username generator and availability checker for Windows.
+
+![Version](https://img.shields.io/badge/version-2.5-blue)
+![Python](https://img.shields.io/badge/Python-3.x-yellow?logo=python&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white)
+![Status](https://img.shields.io/badge/status-active-success)
+
+Generate names, check Roblox username availability, filter for more word-like results, scan custom wordlists, save finds, and securely manage generated signup credentials.
+
+**Made by scarn.**
+
+</div>
+
+---
+
+## ✨ Features
+
+- **Username scanning** — Generate random usernames and check whether they are available.
+- **Aesthetic mode** — Generate more pronounceable, word-like names using consonant/vowel patterns and a scoring system.
+- **Manual lookup** — Type a specific username and check it immediately.
+- **Custom wordlists** — Feed the program a `.txt` file and generate/check variations of your own words.
+- **4, 5, and 6 character generation** — Quickly target short usernames.
+- **Multiple character sets** — Letters only, letters + numbers, or numbers only.
+- **Availability highlighting** — Available names are easy to spot in the terminal.
+- **Claim menu** — Pick an available name from a numbered list after a scan.
+- **Secure credential saving** — Single-name claims generate a strong password and save the username/password pair in Windows Credential Manager.
+- **Saved Accounts menu** — Browse saved usernames, copy or reveal one password on demand, open Roblox login, delete a saved credential, or export usernames only.
+- **Browser companion included** — The Windows release includes the Chrome/Edge autofill extension.
+- **Birthday + username + password autofill** — The companion fills the Roblox Create Account form using your saved birthday and the credentials prepared by Name Sniffer.
+- **Enter-to-submit** — Once the signup form is filled, pressing Enter activates Roblox's normal Create Account / Sign Up button.
+- **Save results** — Export available usernames to timestamped text files on your Desktop without storing passwords in plaintext.
+- **Safe tab limit** — Bulk-open remains optional with a configurable cap.
+- **Concurrent checks** — Uses multiple workers to check batches faster.
+- **Rate-limit/error reporting** — Reports Roblox rate limiting, CSRF failures, invalid names, and other request errors.
+
+---
+
+## 🖥️ Example
+
+```text
+                 Scarn's Name Sniffer v2.5
+       (Roblox username generator + availability checker)
+
+Fetching CSRF token... OK
+
+[s] scan  [a] aesthetic  [g] generate  [m] manual  [w] wordlist\n[x] mutate [p] presets [v] watchlist [r] resume [c] credentials\n[b] exclusions [d] diagnostics [u] updates [q] quit
+```
+
+### Modes
+
+| Key | Mode | What it does |
+|---|---|---|
+| `s` | Scan | Randomly generates usernames until it finds the requested number available. |
+| `g` | Generate | Generates a batch and checks all names. |
+| `a` | Aesthetic | Searches specifically for more word-like generated names. |
+| `m` | Manual | Checks usernames you type yourself. |
+| `w` | Wordlist | Generates/checks variations from a custom text file. |
+| `c` | Credentials | Opens the Saved Accounts menu for Name Sniffer credentials stored in Windows Credential Manager. |
+
+---
+
+## 🆕 What's New in v2.5
+
+- Added a **Saved Accounts / Credentials** menu directly inside the Windows app.
+- Saved usernames are listed without dumping passwords onto the screen.
+- For one selected credential you can copy the username, copy the password, reveal the password, open Roblox login, or delete the credential.
+- Deleting a credential requires typing the username as confirmation.
+- Added a usernames-only export option for saved credentials.
+- The included browser companion lets you press **Enter** to activate Roblox's normal Create Account / Sign Up button after the form is filled.
+- The Enter shortcut does **not** bypass CAPTCHA, verification, rate limits, disabled buttons, or any other Roblox protections.
+- The Windows release includes both the EXE and the browser extension.
+
+---
+
+## ⚡ Turbo scanning pipeline
+
+Name Sniffer v2.5 now uses a two-stage network pipeline designed to maximize useful throughput without evading Roblox limits:
+
+1. **Batch cache lookup** — up to 100 candidates are checked against the local SQLite history in one query.
+2. **Official bulk existence lookup** — uncached candidates are sent to Roblox's `users.roblox.com/v1/usernames/users` endpoint in batches of up to 100. Names returned by that endpoint are immediately classified as taken.
+3. **Survivor validation** — only names not resolved as existing users are sent through the signup username validator to distinguish available, inappropriate, reserved, or invalid names.
+4. **Batch database commit** — results are written to SQLite in groups instead of committing once per username.
+5. **AIMD validator concurrency** — individual validation starts aggressively, ramps after healthy waves, and cuts concurrency sharply after rate-limit responses.
+6. **Connection pooling** — the validator HTTP pool is expanded beyond the default Requests pool size.
+7. **Throttled terminal rendering** — the live dashboard refreshes at a bounded rate so console output does not become the scanner's bottleneck.
+
+For taken-heavy scans, this can dramatically increase **usernames classified per actual HTTP request**. The completion screen reports:
+
+```text
+Usernames classified
+Network usernames
+Actual HTTP requests
+Bulk lookup requests
+Resolved by bulk
+Individual validators
+Effective density (usernames / HTTP request)
+Average throughput (usernames / second)
+```
+
+The bulk lookup is only an existence prefilter. A name missing from the bulk response is **never assumed available**; it still goes through signup validation before being shown as available.
+
+Roblox `429 Too Many Requests` responses are respected. Name Sniffer uses cooldown/backoff behavior and does not use proxies, IP rotation, or other rate-limit-evasion techniques.
+
+---
+
+## 🧠 Advanced Scanner Features
+
+The v2.5 scanner now includes a local search-engine layer around the existing Roblox availability checker:
+
+- **SQLite scan history + smart caching** — fresh results are reused locally instead of wasting another request. Available names expire quickly; taken and inappropriate results live longer; errors and rate-limit responses are never cached.
+- **Adaptive concurrency** — starts conservatively and slowly increases workers after healthy batches. Rate limiting and elevated request errors reduce concurrency and trigger cooldowns.
+- **Advanced filters** — control digits, underscores, maximum digit count, starting character, vowel requirement, adjacent repeats, and custom excluded patterns.
+- **Username ranking** — every available result gets a 0–100 cleanliness/word-likeness score and a label such as Excellent, Great, or Good.
+- **Persistent duplicate prevention** — previously checked names live in the SQLite history so repeated scans can reuse valid cached knowledge.
+- **Scan presets** — built-in Rare 4, Clean 5, and Mixed 6 presets, plus custom presets saved from your own scan settings.
+- **Watchlist** — save interesting usernames and manually recheck the whole watchlist once when you choose.
+- **Resume checkpoints** — interrupted target scans save their progress, counts, filters, and settings for later resumption.
+- **Live terminal dashboard** — checked, available, taken, inappropriate, other/errors, cache hits, worker count, speed, runtime, and target progress update during scans.
+- **TXT + CSV + JSON export** — ranked available results can be exported in all three formats.
+- **Scan statistics** — completion summaries include network checks, cache hits, availability rate, average speed, runtime, and best-ranked result.
+- **Diagnostics** — checks the SQLite database, state path, Roblox connectivity, CSRF token, clipboard helper, and bundled browser-extension folder.
+- **Result browser** — sort available names by score, alphabetically, or digit count before claiming/exporting.
+- **Mutation engine** — provide a seed word and generate/check useful substitutions, leetspeak variants, prefixes, suffixes, and length-normalized mutations.
+- **Excluded-pattern list** — maintain local substring/regex rules that reject unwanted generated names before any network request.
+- **Portable mode** — rename `portable.flag.example` to `portable.flag` beside the EXE. Scanner state and exports then live under a local `data/` directory beside the app.
+- **Update checker** — checks the GitHub Releases API and can open the Releases page when a newer version is available. It never silently self-updates.
+- **Automated tests** — GitHub Actions compiles all v2.5 Python entrypoints and runs the pytest suite before building the Windows EXE.
+
+### Advanced menu
+
+```text
+[s] scan       [a] aesthetic    [g] generate    [m] manual    [w] wordlist
+[x] mutate     [p] presets      [v] watchlist   [r] resume    [c] credentials
+[b] exclusions [d] diagnostics  [u] updates     [q] quit
+```
+
+### Local scanner data
+
+Normal Windows mode stores persistent scanner data under:
+
+```text
+%LOCALAPPDATA%\ScarnsNameSniffer
+```
+
+This contains the SQLite history database, presets, excluded patterns, and resume checkpoint. Passwords for prepared Roblox signup credentials remain handled separately by Windows Credential Manager.
+
+---
+
+## 🚀 Download
+
+**Most users should download Name Sniffer from the GitHub Releases page. You do not need Python, PyInstaller, or any build tools.**
+
+1. Open the repository's **Releases** section.
+2. Open the latest release, currently **v2.5**.
+3. Download the Windows package or the files attached to the release.
+4. Extract the download.
+5. Run `ScarnsNameSniffer.exe`.
+
+The v2.5 release includes the Windows app and the browser autofill companion.
+
+Typical release files include:
+
+```text
+ScarnsNameSniffer.exe
+ScarnsNameSniffer-Autofill-v2.5.zip
+```
+
+If you only want the browser companion, download `ScarnsNameSniffer-Autofill-v2.5.zip` from the release.
+
+> Windows SmartScreen may warn about independently distributed executables that are not code-signed. The source code is public in this repository for inspection.
+
+---
+
+## 🌐 Install the Autofill Extension
+
+### Chrome
+
+1. Download `ScarnsNameSniffer-Autofill-v2.5.zip` from the latest GitHub Release.
+2. Extract the ZIP to a folder.
+3. Open `chrome://extensions`.
+4. Turn on **Developer mode**.
+5. Click **Load unpacked**.
+6. Select the extracted extension folder containing `manifest.json`.
+7. Pin **Scarn's Name Sniffer Autofill** if you want quick access to birthday settings.
+
+### Edge
+
+1. Download and extract `ScarnsNameSniffer-Autofill-v2.5.zip` from the latest GitHub Release.
+2. Open `edge://extensions`.
+3. Turn on **Developer mode**.
+4. Click **Load unpacked**.
+5. Select the extracted extension folder containing `manifest.json`.
+
+Click the extension icon once, save the account holder's birthday, and leave **Press Enter to submit signup** enabled if you want the keyboard shortcut.
+
+---
+
+## 🧑‍💻 Developers / Run From Source
+
+Regular users should use the prebuilt files from **Releases**. This section is only for developers who want to inspect or modify the source.
+
+### Requirements
+
+- Windows 10 or 11
+- Python 3
+- `requests`
+
+Clone the repository:
+
+```powershell
+git clone https://github.com/NNoradrenaline/ScarnsNameSniffer.git
+cd ScarnsNameSniffer
+```
+
+Install the dependency:
+
+```powershell
+python -m pip install requests
+```
+
+Run v2.5 from source:
+
+```powershell
+python v25_entry.py
+```
+
+You do **not** need to build the EXE yourself for normal use. Download the ready-to-run executable from **GitHub Releases** instead.
+
+---
+
+## 🔐 Saved Accounts / Credentials
+
+Choose `[c]redentials` from the main menu to browse credentials created by single-name claim mode. Entries are stored as Windows Generic Credentials using names such as `ScarnsNameSniffer:exampleuser`.
+
+For a selected username, v2.5 can copy the username, copy or reveal the saved password, open Roblox login, delete the credential after confirmation, or export a usernames-only list.
+
+Credentials are saved **before** Roblox signup finishes, so a saved entry means Name Sniffer prepared credentials for that username. It does not guarantee the Roblox account was successfully created.
+
+---
+
+## ⚠️ Rate Limits
+
+Name Sniffer uses Roblox's username-validation service. Large or repeated scans may be rate-limited. If you receive a `ratelimited` result, stop the scan and try again later. Do not use the tool to bypass Roblox limits or platform protections.
+
+---
+
+## 🔐 Privacy
+
+Name Sniffer does **not** require an existing Roblox password, `.ROBLOSECURITY` cookie, or Roblox authentication token. Generated signup credentials are stored locally under your Windows account when secure saving succeeds. Passwords are not stored in extension history or plaintext scan-result files.
+
+---
+
+## ⚖️ Disclaimer
+
+Scarn's Name Sniffer is an unofficial community tool and is **not affiliated with, endorsed by, or sponsored by Roblox Corporation**.
+
+Username availability can change at any time. Use the project responsibly and follow Roblox's Terms of Use and applicable API/service limits.
+
+---
+
+<div align="center">
+
+### 🔎 Find the name before somebody else does.
+
+**Scarn's Name Sniffer v2.5**
+
+</div>
+~~~~~
+
+
+---
+
+## FILE: `browser-extension/README.md`
+
+Blob SHA: `1c02e85279168f6001934fa2ad333c1ec5cf93b1`
+
+~~~~~markdown
+# Scarn's Name Sniffer Autofill Companion v2.5.1
+
+This optional Chrome/Edge extension works with the Name Sniffer v2.5 Windows EXE.
+
+When you choose a single name in Name Sniffer, the Windows app generates a strong password, saves the username/password pair in Windows Credential Manager, prepares a one-time clipboard handoff, and opens Roblox Create Account. The companion then:
+
+- reads the one-time username/password handoff from the clipboard
+- fills the Roblox username field automatically
+- fills the exact password already saved by the Windows app
+- clears the one-time clipboard handoff after reading it
+- fills your saved birthday automatically
+- records only non-secret account history locally (username, birthday, timestamp, and credential location)
+- shows a small panel where you can reveal or copy the generated password
+- lets you press **Enter** to activate Roblox's normal **Create Account / Sign Up** button once the form is filled
+
+Enter-to-submit defaults to **on**. Click the extension icon and uncheck **Press Enter to submit signup** if you want to disable it.
+
+The Enter shortcut does not bypass CAPTCHA, verification, rate limits, disabled buttons, or any other Roblox checks. It only performs the same normal button activation you could do with the mouse.
+
+Passwords are not stored in extension history or plaintext files. When secure saving succeeds, the password is stored by Windows Credential Manager under the current Windows account.
+
+## Auto-add recovery email
+
+The extension can optionally add one recovery email after a newly created account signs in.
+
+1. Click the extension icon.
+2. Enter your recovery email.
+3. Enable **Automatically add email after signup**.
+4. Save settings.
+5. Use Name Sniffer normally.
+
+After signup, the helper:
+
+- waits until Roblox reports that the newly prepared username is the account currently logged in
+- opens **Settings > Account Info**
+- uses the normal **Add Email** control
+- fills the saved email address
+- fills the temporary signup password only if Roblox asks for it
+- activates Roblox's normal **Add Email / Send Verification** button
+- stops and tells you to check your inbox
+
+The extension **does not read your inbox, click the verification link, enter an emailed code, or bypass any Roblox verification step**. You complete verification manually from your email.
+
+The helper also refuses to use **Update Email / Change Email / Remove Email**. If an account already appears to have an email, it stops instead of replacing it.
+
+The saved email is stored in Chrome/Edge extension local storage. A signup password needed by the Add Email dialog is kept only in extension **session** storage behind the background service worker, expires after 15 minutes, and is cleared after the verification request.
+
+## Install from Releases
+
+Download `ScarnsNameSniffer-Autofill-v2.5.zip` from the project's GitHub Releases page and extract it before loading the extension.
+
+## Set your birthday
+
+1. Click the **Scarn's Name Sniffer Autofill** extension icon in Chrome or Edge.
+2. Choose the account holder's actual birthday.
+3. Optionally enter a recovery email and enable **Automatically add email after signup**.
+4. Click **Save settings**.
+5. Leave **Press Enter to submit signup** enabled if you want the Enter shortcut.
+6. Run Name Sniffer normally.
+
+## Install in Chrome
+
+1. Extract the extension ZIP to a folder.
+2. Open `chrome://extensions`.
+3. Turn on **Developer mode**.
+4. Click **Load unpacked**.
+5. Select the extracted folder containing `manifest.json`.
+
+## Install in Edge
+
+1. Extract the extension ZIP to a folder.
+2. Open `edge://extensions`.
+3. Turn on **Developer mode**.
+4. Click **Load unpacked**.
+5. Select the extracted folder containing `manifest.json`.
+
+After installation, click the extension icon once to save the birthday. Then choose an available name in Name Sniffer. Roblox Create Account should open with the username, password, and birthday filled in. Press **Enter** when you are ready to submit the normal Roblox form.
+
+If Chrome blocks the automatic clipboard read on a particular run, the companion shows an **Autofill now** button. Clicking it retries with a user gesture.
+
+## Secure account storage
+
+For single-name claim mode, passwords are saved by the Windows app in Windows Credential Manager under names such as:
+
+```text
+ScarnsNameSniffer:exampleuser
+```
+
+Name Sniffer v2.5 adds a **[c]redentials** menu where you can list saved usernames, copy or reveal a password on demand, open Roblox login, delete a saved credential, or export a usernames-only list.
+
+The extension stores only non-secret account history. Bulk-open mode does not generate or save account passwords.
+~~~~~
+
+
+---
+
+## FILE: `browser-extension/background.js`
+
+Blob SHA: `411128f45d53b7bd4969d129ad0bcd708180bddb`
+
+~~~~~javascript
+(() => {
+  "use strict";
+
+  function replyAsync(sendResponse, task) {
+    Promise.resolve()
+      .then(task)
+      .then(sendResponse)
+      .catch(error => {
+        sendResponse({
+          ok: false,
+          error: String(error?.message || error || "unknown error")
+        });
+      });
+    return true;
+  }
+
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === "scarn:getAuthenticatedUser") {
+      return replyAsync(sendResponse, async () => {
+        const response = await fetch(
+          "https://users.roblox.com/v1/users/authenticated",
+          {
+            method: "GET",
+            credentials: "include",
+            cache: "no-store",
+            headers: { Accept: "application/json" }
+          }
+        );
+
+        if (!response.ok) {
+          return { ok: false, status: response.status };
+        }
+
+        const data = await response.json();
+        return {
+          ok: true,
+          user: {
+            id: data.id ?? null,
+            name: data.name || "",
+            displayName: data.displayName || ""
+          }
+        };
+      });
+    }
+
+    if (message?.type === "scarn:storePendingSecret") {
+      return replyAsync(sendResponse, async () => {
+        const secret = message.secret || {};
+        if (
+          !secret.username ||
+          !secret.password ||
+          !secret.expiresAt
+        ) {
+          return { ok: false, error: "invalid secret payload" };
+        }
+
+        await chrome.storage.session.set({
+          pendingSignupSecret: {
+            username: String(secret.username),
+            password: String(secret.password),
+            armedAt: Number(secret.armedAt || Date.now()),
+            expiresAt: Number(secret.expiresAt)
+          }
+        });
+        return { ok: true };
+      });
+    }
+
+    if (message?.type === "scarn:getPendingSecret") {
+      return replyAsync(sendResponse, async () => {
+        const { pendingSignupSecret } =
+          await chrome.storage.session.get({
+            pendingSignupSecret: null
+          });
+
+        if (!pendingSignupSecret) {
+          return { ok: false, error: "no pending secret" };
+        }
+
+        if (Date.now() > Number(pendingSignupSecret.expiresAt || 0)) {
+          await chrome.storage.session.remove("pendingSignupSecret");
+          return { ok: false, error: "pending secret expired" };
+        }
+
+        if (
+          message.username &&
+          String(pendingSignupSecret.username).toLowerCase() !==
+            String(message.username).toLowerCase()
+        ) {
+          return { ok: false, error: "pending username mismatch" };
+        }
+
+        return {
+          ok: true,
+          secret: pendingSignupSecret
+        };
+      });
+    }
+
+    if (message?.type === "scarn:clearPendingSecret") {
+      return replyAsync(sendResponse, async () => {
+        await chrome.storage.session.remove("pendingSignupSecret");
+        return { ok: true };
+      });
+    }
+
+    return false;
+  });
+})();
+~~~~~
